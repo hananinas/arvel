@@ -1,0 +1,10 @@
+{
+    "files.associations": {
+        "*.dbclient-js": "javascript",
+        ".fantomasignore": "ignore",
+        "string": "cpp",
+        "cstdlib": "cpp",
+        "cstring": "cpp"
+    },
+    "idf.port": "/dev/ttyACM0"
+}

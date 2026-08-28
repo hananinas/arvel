@@ -1,0 +1,705 @@
+#include "ai_chat_bsp.h"
+#include "esp_wifi_bsp.h"
+#include <stdio.h>
+#include <string>
+#include <cstring>
+#include <cstdlib>
+#include <time.h>
+#include <sys/time.h>
+#include "esp_timer.h"
+#include "esp_log.h"
+#include "esp_system.h"
+#include "freertos/queue.h"
+#include "freertos/event_groups.h"
+#include "esp_http_client.h"
+#include "esp_crt_bundle.h"
+#include "esp_sntp.h"
+#include <cJSON.h>
+#include <errno.h>
+
+#define OPENROUTER_URL "https://openrouter.ai/api/v1/chat/completions"
+#define OPENROUTER_HTTP_REFERER "https://example.local/esp32"
+#define OPENROUTER_TITLE "ESP32 Touch Panel"
+
+#define CHAT_QUEUE_LENGTH 2
+#define CHAT_PROMPT_MAX_LEN 512
+#define CHAT_TASK_STACK_SIZE 16384
+#define CHAT_DEFAULT_PROMPT "Tell me something interesting about the ESP32-S3."
+
+// GTS Root R4 trusted root needed for the openrouter.ai TLS chain.
+static const char OPENROUTER_ROOT_CA_PEM[] =
+	"-----BEGIN CERTIFICATE-----\n"
+	"MIIDejCCAmKgAwIBAgIQf+UwvzMTQ77dghYQST2KGzANBgkqhkiG9w0BAQsFADBX\n"
+	"MQswCQYDVQQGEwJCRTEZMBcGA1UEChMQR2xvYmFsU2lnbiBudi1zYTEQMA4GA1UE\n"
+	"CxMHUm9vdCBDQTEbMBkGA1UEAxMSR2xvYmFsU2lnbiBSb290IENBMB4XDTIzMTEx\n"
+	"NTAzNDMyMVoXDTI4MDEyODAwMDA0MlowRzELMAkGA1UEBhMCVVMxIjAgBgNVBAoT\n"
+	"GUdvb2dsZSBUcnVzdCBTZXJ2aWNlcyBMTEMxFDASBgNVBAMTC0dUUyBSb290IFI0\n"
+	"MHYwEAYHKoZIzj0CAQYFK4EEACIDYgAE83Rzp2iLYK5DuDXFgTB7S0md+8Fhzube\n"
+	"Rr1r1WEYNa5A3XP3iZEwWus87oV8okB2O6nGuEfYKueSkWpz6bFyOZ8pn6KY019e\n"
+	"WIZlD6GEZQbR3IvJx3PIjGov5cSr0R2Ko4H/MIH8MA4GA1UdDwEB/wQEAwIBhjAd\n"
+	"BgNVHSUEFjAUBggrBgEFBQcDAQYIKwYBBQUHAwIwDwYDVR0TAQH/BAUwAwEB/zAd\n"
+	"BgNVHQ4EFgQUgEzW63T/STaj1dj8tT7FavCUHYwwHwYDVR0jBBgwFoAUYHtmGkUN\n"
+	"l8qJUC99BM00qP/8/UswNgYIKwYBBQUHAQEEKjAoMCYGCCsGAQUFBzAChhpodHRw\n"
+	"Oi8vaS5wa2kuZ29vZy9nc3IxLmNydDAtBgNVHR8EJjAkMCKgIKAehhxodHRwOi8v\n"
+	"Yy5wa2kuZ29vZy9yL2dzcjEuY3JsMBMGA1UdIAQMMAowCAYGZ4EMAQIBMA0GCSqG\n"
+	"SIb3DQEBCwUAA4IBAQAYQrsPBtYDh5bjP2OBDwmkoWhIDDkic574y04tfzHpn+cJ\n"
+	"odI2D4SseesQ6bDrarZ7C30ddLibZatoKiws3UL9xnELz4ct92vID24FfVbiI1hY\n"
+	"+SW6FoVHkNeWIP0GCbaM4C6uVdF5dTUsMVs/ZbzNnIdCp5Gxmx5ejvEau8otR/Cs\n"
+	"kGN+hr/W5GvT1tMBjgWKZ1i4//emhA1JG1BbPzoLJQvyEotc03lXjTaCzv8mEbep\n"
+	"8RqZ7a2CPsgRbuvTPBwcOMBBmuFeU88+FSBX6+7iP0il8b4Z0QFqIwwMHfs/L6K1\n"
+	"vepuoxtGzi4CZ68zJpiq1UvSqTbFJjtbD4seiMHl\n"
+	"-----END CERTIFICATE-----\n";
+
+typedef struct {
+	char *prompt;
+} chat_request_t;
+
+// Module state
+static std::string s_api_key = "<REPLACE_WITH_YOUR_OPENROUTER_API_KEY>";
+static std::string s_model = "openai/gpt-4o";
+static QueueHandle_t chat_request_queue = NULL;
+static TaskHandle_t chat_task_handle = NULL;
+static EventGroupHandle_t wifi_event_group = NULL;
+static bool chat_in_progress = false;
+static lv_obj_t *chat_panel = NULL;
+static lv_obj_t *chat_status_label = NULL;
+static lv_obj_t *chat_output = NULL;
+static lv_obj_t *chat_input = NULL;
+static lv_obj_t *chat_send_btn = NULL;
+static lv_obj_t *chat_toggle_btn = NULL;
+static lv_obj_t *chat_toggle_label = NULL;
+
+// Forward declarations
+static void chat_worker_task(void *arg);
+static void create_chat_ui(lv_ui *ui);
+static void chat_toggle_event_cb(lv_event_t *e);
+static void chat_send_event_cb(lv_event_t *e);
+static void chat_update_status(const char *text);
+static void chat_update_output(const char *text);
+static void chat_textarea_set_read_only(lv_obj_t *obj, bool enable);
+static std::string build_chat_payload(const char *prompt);
+static std::string extract_assistant_reply(const std::string &response_body);
+static void initialize_sntp(void);
+static bool wait_for_time_sync(int timeout_sec);
+static void log_http_error_details(esp_http_client_handle_t client, esp_err_t err);
+
+static void chat_update_status(const char *text)
+{
+	if (!chat_status_label) {
+		return;
+	}
+	lv_label_set_text(chat_status_label, (text != nullptr) ? text : "");
+}
+
+static void chat_update_output(const char *text)
+{
+	if (!chat_output) {
+		return;
+	}
+	lv_textarea_set_text(chat_output, (text != nullptr) ? text : "");
+	lv_obj_scroll_to_y(chat_output, LV_COORD_MAX, LV_ANIM_OFF);
+}
+
+static void chat_textarea_set_read_only(lv_obj_t *obj, bool enable)
+{
+	if (!obj) {
+		return;
+	}
+#if LVGL_VERSION_MAJOR >= 9
+	lv_textarea_set_read_only(obj, enable);
+#else
+	if (enable) {
+		lv_obj_clear_flag(obj, LV_OBJ_FLAG_CLICK_FOCUSABLE);
+	} else {
+		lv_obj_add_flag(obj, LV_OBJ_FLAG_CLICK_FOCUSABLE);
+	}
+#endif
+}
+
+static void chat_toggle_event_cb(lv_event_t *e)
+{
+	if (!chat_panel) {
+		return;
+	}
+	if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
+		return;
+	}
+	bool hidden = lv_obj_has_flag(chat_panel, LV_OBJ_FLAG_HIDDEN);
+	if (hidden) {
+		lv_obj_clear_flag(chat_panel, LV_OBJ_FLAG_HIDDEN);
+		if (chat_toggle_label) {
+			lv_label_set_text(chat_toggle_label, "Hide Chat");
+		}
+		if (wifi_event_group) {
+			EventBits_t wifi_bits = xEventGroupGetBits(wifi_event_group);
+			if ((wifi_bits & WIFI_CONNECTED_BIT) != 0) {
+				chat_update_status("Wi-Fi connected");
+			} else {
+				chat_update_status("Wi-Fi not connected");
+			}
+		}
+	} else {
+		lv_obj_add_flag(chat_panel, LV_OBJ_FLAG_HIDDEN);
+		if (chat_toggle_label) {
+			lv_label_set_text(chat_toggle_label, "AI Chat");
+		}
+	}
+}
+
+static std::string build_chat_payload(const char *prompt)
+{
+	const char *sanitized_prompt = (prompt && prompt[0] != '\0') ? prompt : CHAT_DEFAULT_PROMPT;
+	cJSON *root = cJSON_CreateObject();
+	if (!root) {
+		return std::string();
+	}
+	if (!cJSON_AddStringToObject(root, "model", s_model.c_str())) {
+		cJSON_Delete(root);
+		return std::string();
+	}
+	cJSON *messages = cJSON_AddArrayToObject(root, "messages");
+	if (!messages) {
+		cJSON_Delete(root);
+		return std::string();
+	}
+	const char *system_text = "You are an assistant running on an ESP32 device display.";
+	cJSON *system_msg = cJSON_CreateObject();
+	if (!system_msg) {
+		cJSON_Delete(root);
+		return std::string();
+	}
+	cJSON_AddStringToObject(system_msg, "role", "system");
+	cJSON_AddStringToObject(system_msg, "content", system_text);
+	cJSON_AddItemToArray(messages, system_msg);
+
+	cJSON *user_msg = cJSON_CreateObject();
+	if (!user_msg) {
+		cJSON_Delete(root);
+		return std::string();
+	}
+	cJSON_AddStringToObject(user_msg, "role", "user");
+	cJSON_AddStringToObject(user_msg, "content", sanitized_prompt);
+	cJSON_AddItemToArray(messages, user_msg);
+
+	char *raw = cJSON_PrintUnformatted(root);
+	std::string payload;
+	if (raw) {
+		payload.assign(raw);
+		cJSON_free(raw);
+	}
+	cJSON_Delete(root);
+	return payload;
+}
+
+static std::string extract_assistant_reply(const std::string &response_body)
+{
+	if (response_body.empty()) {
+		ESP_LOGW("chat", "Response body is empty");
+		return std::string();
+	}
+	
+	ESP_LOGI("chat", "Parsing JSON response (%d bytes)", response_body.length());
+	cJSON *root = cJSON_Parse(response_body.c_str());
+	if (!root) {
+		ESP_LOGW("chat", "Failed to parse OpenRouter response as JSON");
+		std::string preview = response_body.substr(0, 100);
+		for (char &c : preview) {
+			if (c == '\n' || c == '\r') c = ' ';
+		}
+		ESP_LOGW("chat", "Response start: %s", preview.c_str());
+		return std::string();
+	}
+	std::string result;
+	cJSON *choices = cJSON_GetObjectItemCaseSensitive(root, "choices");
+	if (choices && cJSON_IsArray(choices)) {
+		ESP_LOGI("chat", "Found choices array");
+		cJSON *first_choice = cJSON_GetArrayItem(choices, 0);
+		if (first_choice) {
+			cJSON *message = cJSON_GetObjectItemCaseSensitive(first_choice, "message");
+			if (message) {
+				cJSON *content = cJSON_GetObjectItemCaseSensitive(message, "content");
+				if (cJSON_IsString(content) && content->valuestring) {
+					result = content->valuestring;
+					ESP_LOGI("chat", "Extracted content (%d bytes)", result.length());
+				} else {
+					ESP_LOGW("chat", "Content field not found or not a string");
+				}
+			} else {
+				ESP_LOGW("chat", "Message field not found");
+			}
+		} else {
+			ESP_LOGW("chat", "First choice not found");
+		}
+	} else {
+		ESP_LOGW("chat", "Choices array not found");
+	}
+	if (result.empty()) {
+		cJSON *error_obj = cJSON_GetObjectItemCaseSensitive(root, "error");
+		if (error_obj) {
+			cJSON *error_msg = cJSON_GetObjectItemCaseSensitive(error_obj, "message");
+			if (cJSON_IsString(error_msg) && error_msg->valuestring) {
+				result = error_msg->valuestring;
+				ESP_LOGI("chat", "Found error message: %s", result.c_str());
+			}
+		}
+	}
+	cJSON_Delete(root);
+	return result;
+}
+
+static void initialize_sntp(void)
+{
+	ESP_LOGI("sntp", "Initializing SNTP");
+	esp_sntp_setoperatingmode(SNTP_OPMODE_POLL);
+	esp_sntp_setservername(0, "pool.ntp.org");
+	esp_sntp_init();
+}
+
+static bool wait_for_time_sync(int timeout_sec)
+{
+	int retry = 0;
+	const int retry_count = timeout_sec * 2;
+	
+	while (esp_sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED && retry < retry_count) {
+		ESP_LOGI("sntp", "Waiting for system time to be set... (%d/%d)", retry, retry_count);
+		vTaskDelay(pdMS_TO_TICKS(500));
+		retry++;
+	}
+	
+	if (esp_sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+		time_t now;
+		struct tm timeinfo;
+		time(&now);
+		localtime_r(&now, &timeinfo);
+		ESP_LOGI("sntp", "Time synchronized: %s", asctime(&timeinfo));
+		return true;
+	}
+	
+	ESP_LOGW("sntp", "Failed to synchronize time within %d seconds", timeout_sec);
+	return false;
+}
+
+static void log_http_error_details(esp_http_client_handle_t client, esp_err_t err)
+{
+	int client_errno = 0;
+	if (client) {
+		client_errno = esp_http_client_get_errno(client);
+	}
+	if (client_errno != 0) {
+		ESP_LOGE("chat", "HTTP request failed: %s (%d), errno=%d (%s)",
+			 esp_err_to_name(err), err, client_errno, strerror(client_errno));
+	} else {
+		ESP_LOGE("chat", "HTTP request failed: %s (%d)", esp_err_to_name(err), err);
+	}
+}
+
+static void chat_send_event_cb(lv_event_t *e)
+{
+	if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
+		return;
+	}
+	if (!chat_input || !chat_send_btn) {
+		return;
+	}
+	if (chat_in_progress) {
+		chat_update_status("Chat busy");
+		return;
+	}
+	const char *text = lv_textarea_get_text(chat_input);
+	if (!text || text[0] == '\0') {
+		text = CHAT_DEFAULT_PROMPT;
+		lv_textarea_set_text(chat_input, CHAT_DEFAULT_PROMPT);
+		lv_textarea_set_cursor_pos(chat_input, LV_TEXTAREA_CURSOR_LAST);
+	}
+	size_t len = strlen(text);
+	if (len > CHAT_PROMPT_MAX_LEN) {
+		len = CHAT_PROMPT_MAX_LEN;
+	}
+	char *prompt_copy = static_cast<char *>(malloc(len + 1));
+	if (!prompt_copy) {
+		chat_update_status("Out of memory");
+		return;
+	}
+	memcpy(prompt_copy, text, len);
+	prompt_copy[len] = '\0';
+
+	if (!chat_request_queue) {
+		free(prompt_copy);
+		chat_update_status("Chat queue missing");
+		return;
+	}
+
+	chat_request_t request = {
+		.prompt = prompt_copy,
+	};
+	if (xQueueSend(chat_request_queue, &request, pdMS_TO_TICKS(10)) == pdPASS) {
+		chat_in_progress = true;
+		lv_obj_add_state(chat_send_btn, LV_STATE_DISABLED);
+		chat_update_status("Contacting OpenRouter...");
+		chat_update_output("");
+		lv_textarea_set_text(chat_input, CHAT_DEFAULT_PROMPT);
+		lv_textarea_set_cursor_pos(chat_input, LV_TEXTAREA_CURSOR_LAST);
+	} else {
+		free(prompt_copy);
+		chat_update_status("Chat queue full");
+	}
+}
+
+static void create_chat_ui(lv_ui *ui)
+{
+	if (!ui || chat_panel) {
+		return;
+	}
+
+	chat_toggle_btn = lv_btn_create(ui->screen_carousel_1_element_2);
+	lv_obj_set_size(chat_toggle_btn, 150, 36);
+	lv_obj_set_pos(chat_toggle_btn, 11, 380);
+	chat_toggle_label = lv_label_create(chat_toggle_btn);
+	lv_label_set_text(chat_toggle_label, "AI Chat");
+	lv_obj_center(chat_toggle_label);
+	lv_obj_add_event_cb(chat_toggle_btn, chat_toggle_event_cb, LV_EVENT_CLICKED, NULL);
+
+	chat_panel = lv_obj_create(ui->screen);
+	lv_obj_set_size(chat_panel, 172, 360);
+	lv_obj_align(chat_panel, LV_ALIGN_TOP_MID, 0, 0);
+	lv_obj_set_style_bg_opa(chat_panel, LV_OPA_80, LV_PART_MAIN);
+	lv_obj_set_style_bg_color(chat_panel, lv_color_hex(0x20232a), LV_PART_MAIN);
+	lv_obj_set_style_pad_all(chat_panel, 8, LV_PART_MAIN);
+	lv_obj_set_style_border_width(chat_panel, 1, LV_PART_MAIN);
+	lv_obj_set_style_border_color(chat_panel, lv_color_hex(0x4c566a), LV_PART_MAIN);
+	lv_obj_add_flag(chat_panel, LV_OBJ_FLAG_HIDDEN);
+
+	chat_status_label = lv_label_create(chat_panel);
+	lv_label_set_text(chat_status_label, "AI chat idle");
+	lv_obj_set_width(chat_status_label, LV_PCT(100));
+	lv_obj_set_style_text_color(chat_status_label, lv_color_hex(0xffffff), LV_PART_MAIN);
+
+	chat_output = lv_textarea_create(chat_panel);
+	lv_obj_set_size(chat_output, 156, 200);
+	lv_obj_set_pos(chat_output, 0, 32);
+	lv_textarea_set_text(chat_output, "");
+	lv_textarea_set_max_length(chat_output, 1024);
+	lv_textarea_set_cursor_click_pos(chat_output, false);
+	chat_textarea_set_read_only(chat_output, true);
+
+	chat_input = lv_textarea_create(chat_panel);
+	lv_obj_set_size(chat_input, 156, 64);
+	lv_obj_set_pos(chat_input, 0, 236);
+	lv_textarea_set_max_length(chat_input, CHAT_PROMPT_MAX_LEN);
+	lv_textarea_set_text(chat_input, CHAT_DEFAULT_PROMPT);
+	lv_textarea_set_placeholder_text(chat_input, "Default prompt will be used");
+	lv_textarea_set_cursor_pos(chat_input, LV_TEXTAREA_CURSOR_LAST);
+
+	chat_send_btn = lv_btn_create(chat_panel);
+	lv_obj_set_size(chat_send_btn, 156, 40);
+	lv_obj_set_pos(chat_send_btn, 0, 308);
+	lv_obj_add_event_cb(chat_send_btn, chat_send_event_cb, LV_EVENT_CLICKED, NULL);
+	lv_obj_t *send_label = lv_label_create(chat_send_btn);
+	lv_label_set_text(send_label, "Send");
+	lv_obj_center(send_label);
+
+	chat_update_status("Wi-Fi not connected");
+}
+
+static void chat_worker_task(void *arg)
+{
+	(void)arg;
+	
+	chat_request_t request;
+	static bool sntp_initialized = false;
+	
+	while (true) {
+		ESP_LOGI("chat", "=== Worker task waiting for chat request from queue ===");
+		if (xQueueReceive(chat_request_queue, &request, portMAX_DELAY) != pdPASS) {
+			ESP_LOGW("chat", "Queue receive failed");
+			continue;
+		}
+		ESP_LOGI("chat", "=== Received chat request from queue ===");
+		if (!request.prompt) {
+			ESP_LOGW("chat", "Received null prompt");
+			continue;
+		}
+		ESP_LOGI("chat", "=== Chat request prompt: '%s' ===", request.prompt);
+
+		if (s_api_key == "<REPLACE_WITH_YOUR_OPENROUTER_API_KEY>" || s_api_key.empty()) {
+			chat_update_status("Set OpenRouter API key");
+			chat_update_output("");
+			free(request.prompt);
+			chat_in_progress = false;
+			if (chat_send_btn) {
+				lv_obj_clear_state(chat_send_btn, LV_STATE_DISABLED);
+			}
+			continue;
+		}
+
+		EventBits_t wifi_bits = wifi_event_group ? xEventGroupGetBits(wifi_event_group) : 0;
+		ESP_LOGI("chat", "=== WiFi check: event_group=%p, bits=0x%lx, WIFI_CONNECTED_BIT=0x%lx ===", 
+			wifi_event_group, (unsigned long)wifi_bits, (unsigned long)WIFI_CONNECTED_BIT);
+		if ((wifi_bits & WIFI_CONNECTED_BIT) == 0) {
+			ESP_LOGW("chat", "=== WiFi NOT connected! bits=0x%lx, expected bit=0x%lx ===", 
+				(unsigned long)wifi_bits, (unsigned long)WIFI_CONNECTED_BIT);
+			chat_update_status("Wi-Fi not connected");
+			vTaskDelay(pdMS_TO_TICKS(100));
+			chat_update_output("");
+			free(request.prompt);
+			chat_in_progress = false;
+			if (chat_send_btn) {
+				lv_obj_clear_state(chat_send_btn, LV_STATE_DISABLED);
+			}
+			continue;
+		}
+		ESP_LOGI("chat", "=== WiFi connected! Proceeding with request ===");
+		
+		// Initialize SNTP on first request after WiFi is connected
+		if (!sntp_initialized) {
+			ESP_LOGI("chat", "WiFi connected, initializing SNTP for time sync");
+			chat_update_status("Syncing time...");
+			initialize_sntp();
+			if (wait_for_time_sync(10)) {
+				ESP_LOGI("chat", "Time synchronized, ready for HTTPS");
+				chat_update_status("Time synced");
+			} else {
+				ESP_LOGW("chat", "Time sync timeout, proceeding anyway");
+				chat_update_status("Time sync timeout");
+			}
+			sntp_initialized = true;
+			vTaskDelay(pdMS_TO_TICKS(500));
+		}
+
+		ESP_LOGI("chat", "=== Processing prompt: %s ===", request.prompt);
+		chat_update_status("Building request...");
+		vTaskDelay(pdMS_TO_TICKS(100));  // Give UI time to update
+		
+		std::string payload = build_chat_payload(request.prompt);
+		std::string response_body;
+		esp_err_t err = ESP_FAIL;
+		int http_status = -1;
+		bool output_set = false;
+
+		if (!payload.empty()) {
+			ESP_LOGI("chat", "=== Payload built successfully, size: %d bytes ===", payload.length());
+			chat_update_status("Connecting to OpenRouter...");
+			vTaskDelay(pdMS_TO_TICKS(200));  // Give UI time to update
+			ESP_LOGI("chat", "=== Starting HTTP client connection ===");
+			
+			// Build Authorization header
+			std::string auth_header = "Bearer ";
+			auth_header += s_api_key;
+			
+			esp_http_client_config_t config = {};
+			config.url = OPENROUTER_URL;
+			config.timeout_ms = 45000;
+			config.user_data = &response_body;
+			config.event_handler = NULL;  // Disable event handler, we'll read manually
+			config.cert_pem = OPENROUTER_ROOT_CA_PEM;
+			config.skip_cert_common_name_check = false;
+			config.buffer_size = 8192;
+			config.buffer_size_tx = 4096;
+			config.is_async = false;
+			config.keep_alive_enable = true;
+			config.keep_alive_idle = 5;
+			config.keep_alive_interval = 5;
+			config.keep_alive_count = 3;
+			config.method = HTTP_METHOD_POST;
+			
+			ESP_LOGI("chat", "=== Initializing HTTP client ===");
+			esp_http_client_handle_t client = esp_http_client_init(&config);
+			if (client) {
+				ESP_LOGI("chat", "=== HTTP client initialized successfully ===");
+				chat_update_status("Setting headers...");
+				vTaskDelay(pdMS_TO_TICKS(100));
+				
+				// Set headers BEFORE opening connection
+				ESP_LOGI("chat", "=== Setting HTTP headers ===");
+				esp_http_client_set_header(client, "Content-Type", "application/json");
+				esp_http_client_set_header(client, "Authorization", auth_header.c_str());
+				esp_http_client_set_header(client, "HTTP-Referer", OPENROUTER_HTTP_REFERER);
+				esp_http_client_set_header(client, "X-Title", OPENROUTER_TITLE);
+				
+				ESP_LOGI("chat", "=== Opening HTTP connection to %s ===", OPENROUTER_URL);
+				chat_update_status("Opening connection...");
+				vTaskDelay(pdMS_TO_TICKS(100));  // Let UI update
+				
+				err = esp_http_client_open(client, payload.length());
+				ESP_LOGI("chat", "=== esp_http_client_open result: %s (0x%x) ===", esp_err_to_name(err), err);
+				
+				if (err != ESP_OK) {
+					ESP_LOGE("chat", "=== FAILED to open HTTP connection: %s (0x%x) ===", esp_err_to_name(err), err);
+					log_http_error_details(client, err);
+					esp_http_client_cleanup(client);
+					chat_update_status("Connection failed");
+					free(request.prompt);
+					chat_in_progress = false;
+					if (chat_send_btn) {
+						lv_obj_clear_state(chat_send_btn, LV_STATE_DISABLED);
+					}
+					if (chat_input) {
+						chat_textarea_set_read_only(chat_input, false);
+					}
+					continue;
+				}
+				
+				ESP_LOGI("chat", "=== Connection opened successfully, writing POST data (%d bytes) ===", payload.length());
+				chat_update_status("Sending request...");
+				vTaskDelay(pdMS_TO_TICKS(100));
+				
+				int wlen = esp_http_client_write(client, payload.c_str(), payload.length());
+				ESP_LOGI("chat", "=== Write result: %d bytes (expected %d) ===", wlen, payload.length());
+				
+				if (wlen < 0) {
+					ESP_LOGE("chat", "=== FAILED to write POST data: %d ===", wlen);
+					esp_http_client_cleanup(client);
+					chat_update_status("Write failed");
+					free(request.prompt);
+					chat_in_progress = false;
+					if (chat_send_btn) {
+						lv_obj_clear_state(chat_send_btn, LV_STATE_DISABLED);
+					}
+					if (chat_input) {
+						chat_textarea_set_read_only(chat_input, false);
+					}
+					continue;
+				}
+				
+				ESP_LOGI("chat", "=== Wrote %d bytes successfully, fetching response headers ===", wlen);
+				chat_update_status("Waiting for response...");
+				vTaskDelay(pdMS_TO_TICKS(100));
+				
+				int content_length = esp_http_client_fetch_headers(client);
+				http_status = esp_http_client_get_status_code(client);
+				ESP_LOGI("chat", "=== Fetch headers complete: Status=%d, Content-Length=%d ===", http_status, content_length);
+				http_status = esp_http_client_get_status_code(client);
+				
+				ESP_LOGI("chat", "HTTP Status: %d, Content-Length: %d", http_status, content_length);
+				
+				if (http_status >= 200 && http_status < 300) {
+					chat_update_status("Reading AI response...");
+					// Read response data
+					char buffer[1024];
+					int read_len;
+					response_body.clear(); // Clear any event handler data
+					int total_read = 0;
+					while ((read_len = esp_http_client_read(client, buffer, sizeof(buffer) - 1)) > 0) {
+						buffer[read_len] = '\0';
+						response_body.append(buffer, read_len);
+						total_read += read_len;
+						if (total_read % 2048 == 0) {
+							ESP_LOGI("chat", "Read %d bytes so far...", total_read);
+						}
+					}
+					
+					ESP_LOGI("chat", "Finished reading response, total: %d bytes", total_read);
+					chat_update_status("Parsing response...");
+					if (!response_body.empty()) {
+						ESP_LOGI("chat", "Response size: %d", response_body.length());
+						// Log first 200 chars for debugging
+						std::string preview = response_body.substr(0, 200);
+						// Replace newlines with spaces for logging
+						for (char &c : preview) {
+							if (c == '\n' || c == '\r') c = ' ';
+						}
+						ESP_LOGI("chat", "Response preview: %s", preview.c_str());
+					}
+					err = ESP_OK;
+				} else {
+					// Read error response
+					char buffer[512];
+					int read_len = esp_http_client_read(client, buffer, sizeof(buffer) - 1);
+					if (read_len > 0) {
+						buffer[read_len] = '\0';
+						response_body.assign(buffer, read_len);
+						ESP_LOGW("chat", "Error response: %s", response_body.c_str());
+					}
+					
+					char status_msg[64];
+					snprintf(status_msg, sizeof(status_msg), "OpenRouter HTTP %d", http_status);
+					chat_update_status(status_msg);
+					err = ESP_FAIL;
+				}
+				
+				esp_http_client_close(client);
+				esp_http_client_cleanup(client);
+			} else {
+				ESP_LOGE("chat", "Failed to init HTTP client");
+				chat_update_status("HTTP client init failed");
+			}
+		} else {
+			ESP_LOGE("chat", "Failed to build OpenRouter payload");
+			chat_update_status("Prompt invalid");
+			chat_update_output("Unable to prepare OpenRouter request");
+			output_set = true;
+		}
+
+		if (!response_body.empty()) {
+			std::string assistant_text = extract_assistant_reply(response_body);
+			if (!assistant_text.empty()) {
+				if (http_status >= 200 && http_status < 300) {
+					chat_update_output(assistant_text.c_str());
+				} else {
+					std::string error_detail = "OpenRouter response: " + assistant_text;
+					chat_update_output(error_detail.c_str());
+				}
+				output_set = true;
+			} else {
+				chat_update_output("Unable to parse OpenRouter response");
+				output_set = true;
+			}
+		} else {
+			if (!output_set) {
+				if (err == ESP_OK && http_status >= 200 && http_status < 300) {
+					chat_update_output("Empty response from OpenRouter");
+					output_set = true;
+				} else if (err != ESP_OK) {
+					chat_update_output(esp_err_to_name(err));
+					output_set = true;
+				}
+			}
+		}
+
+		free(request.prompt);
+
+		chat_in_progress = false;
+		if (chat_send_btn) {
+			lv_obj_clear_state(chat_send_btn, LV_STATE_DISABLED);
+		}
+	}
+}
+
+// Public API Implementation
+void ai_chat_init(lv_ui *ui, EventGroupHandle_t wifi_evt_group)
+{
+	if (!ui) {
+		ESP_LOGE("ai_chat", "UI pointer is NULL");
+		return;
+	}
+	
+	wifi_event_group = wifi_evt_group;
+	
+	if (!chat_request_queue) {
+		chat_request_queue = xQueueCreate(CHAT_QUEUE_LENGTH, sizeof(chat_request_t));
+	}
+	
+	create_chat_ui(ui);
+	
+	if (chat_request_queue && chat_task_handle == NULL) {
+		xTaskCreatePinnedToCore(chat_worker_task, "chat_worker_task", CHAT_TASK_STACK_SIZE, NULL, 4, &chat_task_handle, 1);
+	}
+	
+	ESP_LOGI("ai_chat", "AI Chat component initialized");
+}
+
+void ai_chat_set_api_key(const char *api_key)
+{
+	if (api_key && api_key[0] != '\0') {
+		s_api_key = api_key;
+		ESP_LOGI("ai_chat", "API key updated");
+	}
+}
+
+void ai_chat_set_model(const char *model)
+{
+	if (model && model[0] != '\0') {
+		s_model = model;
+		ESP_LOGI("ai_chat", "Model set to: %s", model);
+	}
+}
