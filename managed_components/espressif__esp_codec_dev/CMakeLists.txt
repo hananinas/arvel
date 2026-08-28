@@ -78,7 +78,7 @@ idf_component_register(SRCS "${COMPONENT_SRCS}"
                        INCLUDE_DIRS "${COMPONENT_ADD_INCLUDEDIRS}"
                        PRIV_INCLUDE_DIRS "${COMPONENT_PRIV_INCLUDEDIRS}"
                        REQUIRES driver
-                       PRIV_REQUIRES freertos esp_driver_i2s esp_driver_spi esp_driver_gpio esp_driver_i2c)
+                       PRIV_REQUIRES freertos esp_driver_gpio esp_driver_i2c esp_driver_spi esp_driver_i2s)
 # Library only support xtensa
 if (CONFIG_CODEC_ZL38063_SUPPORT)
   if (NOT ((CONFIG_IDF_TARGET STREQUAL "esp32c6") OR (CONFIG_IDF_TARGET STREQUAL "esp32c3") OR (CONFIG_IDF_TARGET STREQUAL "esp32p4")))

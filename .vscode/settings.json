@@ -6,5 +6,6 @@
         "cstdlib": "cpp",
         "cstring": "cpp"
     },
-    "idf.port": "/dev/ttyACM0"
+    "idf.port": "/dev/ttyACM0",
+    "idf.flashType": "JTAG"
 }

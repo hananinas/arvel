@@ -125,16 +125,16 @@ void user_app_init(void)
 	app_touch_data_queue = xQueueCreate(10,sizeof(app_touch_t));
   	audio_ptr = (uint8_t *)heap_caps_malloc(192 * 1000 * sizeof(uint8_t), MALLOC_CAP_SPIRAM);
 	setup_ui(&src_ui);
-	espwifi_init();  // Initialize WiFi first so wifi_even_ event group is created
+	espwifi_init();  
 	ai_chat_init(&src_ui, wifi_even_);
 	ai_chat_set_api_key("");
-	ai_chat_set_model("openai/gpt-4o");
+	ai_chat_set_model("openai/gpt-5");
   	lcd_bl_pwm_bsp_init(LCD_PWM_MODE_255);
 	tca9554_init();
   	button_Init();
   	adc_bsp_init();
   	i2c_rtc_setup();
-  	i2c_rtc_setTime(2025,7,7,18,43,30);
+  	i2c_rtc_setTime(2025,11,12,11,21,30);
   	i2c_imu_setup();
   	_sdcard_init();
 	user_audio_bsp_init();
