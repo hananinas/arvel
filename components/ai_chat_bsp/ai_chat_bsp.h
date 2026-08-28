@@ -28,7 +28,8 @@ void ai_chat_set_api_key(const char *api_key);
 /**
  * @brief Set the OpenRouter model to use
  * 
- * @param model The model identifier (e.g., "openai/gpt-4o")
+ * @param model The model identifier (e.g., "openai/gpt-4o", "google/gemini-2.5-flash")
+ * @note For audio input support, use models like "google/gemini-2.5-flash" that support audio
  */
 void ai_chat_set_model(const char *model);
 

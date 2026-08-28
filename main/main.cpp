@@ -237,11 +237,6 @@ static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
     if(pointY > EXAMPLE_LCD_H_RES) pointY = EXAMPLE_LCD_H_RES;
     data->point.x = pointY;
     data->point.y = (EXAMPLE_LCD_V_RES-pointX);
-	/*touch test*/
-	app_touch_t user_touch_data;
-	user_touch_data.x = data->point.x;
-	user_touch_data.y = data->point.y;
-    xQueueSend(app_touch_data_queue,&user_touch_data,0);
   }
   else 
   {

@@ -17,6 +17,8 @@ void example_i2s_audio_Test(void *arg);
 
 void audio_playback_read(void *data_ptr,uint32_t len);
 
+void audio_playback_read_chunked(void *data_ptr, uint32_t total_len, uint32_t chunk_size);
+
 void audio_playback_write(void *data_ptr,uint32_t len);
 void audio_play_init(void);
 

@@ -149,6 +149,33 @@ void audio_playback_read(void *data_ptr,uint32_t len)
 	esp_codec_dev_read(record, data_ptr, len);
 }
 
+void audio_playback_read_chunked(void *data_ptr, uint32_t total_len, uint32_t chunk_size)
+{
+	uint8_t *write_ptr = (uint8_t *)data_ptr;
+	uint32_t total_read = 0;
+	
+	ESP_LOGI("audio", "Starting chunked audio read: total=%d, chunk=%d", total_len, chunk_size);
+	
+	while (total_read < total_len) {
+		uint32_t bytes_to_read = (total_len - total_read) < chunk_size ? (total_len - total_read) : chunk_size;
+		
+		if (esp_codec_dev_read(record, write_ptr, bytes_to_read) == ESP_CODEC_DEV_OK) {
+			write_ptr += bytes_to_read;
+			total_read += bytes_to_read;
+		} else {
+			ESP_LOGW("audio", "Read failed at %d bytes", total_read);
+			vTaskDelay(pdMS_TO_TICKS(1));
+		}
+		
+		// Allow other tasks to run periodically
+		if (total_read % (chunk_size * 10) == 0) {
+			vTaskDelay(pdMS_TO_TICKS(1));
+		}
+	}
+	
+	ESP_LOGI("audio", "Chunked audio read completed: %d bytes", total_read);
+}
+
 void audio_playback_write(void *data_ptr,uint32_t len)
 {
 	esp_codec_dev_write(playback, data_ptr, len);

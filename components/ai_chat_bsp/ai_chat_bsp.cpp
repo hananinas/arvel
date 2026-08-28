@@ -1,5 +1,6 @@
 #include "ai_chat_bsp.h"
 #include "esp_wifi_bsp.h"
+#include "user_audio_bsp.h"
 #include <stdio.h>
 #include <string>
 #include <cstring>
@@ -52,6 +53,9 @@ static const char OPENROUTER_ROOT_CA_PEM[] =
 
 typedef struct {
 	char *prompt;
+	uint8_t *audio_data;
+	size_t audio_size;
+	bool is_audio;
 } chat_request_t;
 
 // Module state
@@ -64,13 +68,18 @@ static bool chat_in_progress = false;
 static lv_obj_t *chat_panel = NULL;
 static lv_obj_t *chat_status_label = NULL;
 static lv_obj_t *chat_output = NULL;
-static lv_obj_t *chat_input = NULL;
-static lv_obj_t *chat_send_btn = NULL;
+static lv_obj_t *chat_voice_btn = NULL;
 static lv_obj_t *chat_toggle_btn = NULL;
 static lv_obj_t *chat_toggle_label = NULL;
+static bool voice_recording = false;
+static bool voice_recorded = false;  // New state: audio ready to send
+static uint8_t *voice_buffer = NULL;
+static size_t voice_buffer_size = 0;
 
 // Forward declarations
 static void chat_worker_task(void *arg);
+static void chat_voice_event_cb(lv_event_t *e);
+static void chat_recording_task(void *arg);
 static void create_chat_ui(lv_ui *ui);
 static void chat_toggle_event_cb(lv_event_t *e);
 static void chat_send_event_cb(lv_event_t *e);
@@ -78,6 +87,9 @@ static void chat_update_status(const char *text);
 static void chat_update_output(const char *text);
 static void chat_textarea_set_read_only(lv_obj_t *obj, bool enable);
 static std::string build_chat_payload(const char *prompt);
+static std::string build_chat_payload_with_audio(const char *prompt, const uint8_t *audio_data, size_t audio_size);
+static std::string base64_encode(const uint8_t *data, size_t len);
+static uint8_t* add_wav_header(const uint8_t *pcm_data, size_t pcm_size, size_t *out_wav_size);
 static std::string extract_assistant_reply(const std::string &response_body);
 static void initialize_sntp(void);
 static bool wait_for_time_sync(int timeout_sec);
@@ -191,6 +203,201 @@ static std::string build_chat_payload(const char *prompt)
 	return payload;
 }
 
+static std::string base64_encode(const uint8_t *data, size_t len)
+{
+	static const char base64_chars[] = 
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+	
+	std::string result;
+	result.reserve(((len + 2) / 3) * 4);
+	
+	for (size_t i = 0; i < len; i += 3) {
+		uint32_t octet_a = i < len ? data[i] : 0;
+		uint32_t octet_b = i + 1 < len ? data[i + 1] : 0;
+		uint32_t octet_c = i + 2 < len ? data[i + 2] : 0;
+		
+		uint32_t triple = (octet_a << 16) | (octet_b << 8) | octet_c;
+		
+		result.push_back(base64_chars[(triple >> 18) & 0x3F]);
+		result.push_back(base64_chars[(triple >> 12) & 0x3F]);
+		result.push_back(i + 1 < len ? base64_chars[(triple >> 6) & 0x3F] : '=');
+		result.push_back(i + 2 < len ? base64_chars[triple & 0x3F] : '=');
+	}
+	
+	return result;
+}
+
+static uint8_t* add_wav_header(const uint8_t *pcm_data, size_t pcm_size, size_t *out_wav_size)
+{
+	// WAV file header structure for PCM data
+	// Audio format: 16kHz, 2 channels, 16-bit PCM
+	const uint32_t sample_rate = 16000;
+	const uint16_t num_channels = 2;
+	const uint16_t bits_per_sample = 16;
+	const uint32_t byte_rate = sample_rate * num_channels * (bits_per_sample / 8);
+	const uint16_t block_align = num_channels * (bits_per_sample / 8);
+	const uint32_t data_size = pcm_size;
+	const uint32_t file_size = 36 + data_size;
+	
+	// Allocate memory for WAV file (44 byte header + PCM data)
+	*out_wav_size = 44 + pcm_size;
+	uint8_t *wav_data = (uint8_t *)malloc(*out_wav_size);
+	if (!wav_data) {
+		ESP_LOGE("chat", "Failed to allocate memory for WAV file");
+		return NULL;
+	}
+	
+	uint8_t *p = wav_data;
+	
+	// RIFF header
+	memcpy(p, "RIFF", 4); p += 4;
+	*(uint32_t*)p = file_size; p += 4;
+	memcpy(p, "WAVE", 4); p += 4;
+	
+	// fmt chunk
+	memcpy(p, "fmt ", 4); p += 4;
+	*(uint32_t*)p = 16; p += 4;  // fmt chunk size
+	*(uint16_t*)p = 1; p += 2;   // audio format (1 = PCM)
+	*(uint16_t*)p = num_channels; p += 2;
+	*(uint32_t*)p = sample_rate; p += 4;
+	*(uint32_t*)p = byte_rate; p += 4;
+	*(uint16_t*)p = block_align; p += 2;
+	*(uint16_t*)p = bits_per_sample; p += 2;
+	
+	// data chunk
+	memcpy(p, "data", 4); p += 4;
+	*(uint32_t*)p = data_size; p += 4;
+	
+	// Copy PCM data
+	memcpy(p, pcm_data, pcm_size);
+	
+	ESP_LOGI("chat", "Created WAV file: %d bytes (header: 44, data: %d)", *out_wav_size, pcm_size);
+	return wav_data;
+}
+
+static std::string build_chat_payload_with_audio(const char *prompt, const uint8_t *audio_data, size_t audio_size)
+{
+	const char *sanitized_prompt = (prompt && prompt[0] != '\0') ? prompt : "Please transcribe this audio.";
+	
+	// First, convert raw PCM to WAV format with proper headers
+	size_t wav_size = 0;
+	uint8_t *wav_data = add_wav_header(audio_data, audio_size, &wav_size);
+	if (!wav_data) {
+		ESP_LOGE("chat", "Failed to create WAV file");
+		return std::string();
+	}
+	
+	cJSON *root = cJSON_CreateObject();
+	if (!root) {
+		ESP_LOGE("chat", "Failed to create JSON root");
+		free(wav_data);
+		return std::string();
+	}
+	
+	// Set model - use a model that supports audio input
+	if (!cJSON_AddStringToObject(root, "model", s_model.c_str())) {
+		cJSON_Delete(root);
+		free(wav_data);
+		ESP_LOGE("chat", "Failed to add model");
+		return std::string();
+	}
+	
+	// Create messages array
+	cJSON *messages = cJSON_AddArrayToObject(root, "messages");
+	if (!messages) {
+		cJSON_Delete(root);
+		free(wav_data);
+		ESP_LOGE("chat", "Failed to create messages array");
+		return std::string();
+	}
+	
+	// Add system message
+	cJSON *system_msg = cJSON_CreateObject();
+	if (!system_msg) {
+		cJSON_Delete(root);
+		free(wav_data);
+		ESP_LOGE("chat", "Failed to create system message");
+		return std::string();
+	}
+	cJSON_AddStringToObject(system_msg, "role", "system");
+	cJSON_AddStringToObject(system_msg, "content", "You are an assistant running on an ESP32 device display. Process audio input and respond appropriately.");
+	cJSON_AddItemToArray(messages, system_msg);
+	
+	// Add user message with audio content
+	cJSON *user_msg = cJSON_CreateObject();
+	if (!user_msg) {
+		cJSON_Delete(root);
+		free(wav_data);
+		ESP_LOGE("chat", "Failed to create user message");
+		return std::string();
+	}
+	cJSON_AddStringToObject(user_msg, "role", "user");
+	
+	// Create content array for multimodal content
+	cJSON *content = cJSON_AddArrayToObject(user_msg, "content");
+	if (!content) {
+		cJSON_Delete(root);
+		free(wav_data);
+		ESP_LOGE("chat", "Failed to create content array");
+		return std::string();
+	}
+	
+	// Add text content
+	cJSON *text_content = cJSON_CreateObject();
+	if (!text_content) {
+		cJSON_Delete(root);
+		free(wav_data);
+		ESP_LOGE("chat", "Failed to create text content");
+		return std::string();
+	}
+	cJSON_AddStringToObject(text_content, "type", "text");
+	cJSON_AddStringToObject(text_content, "text", sanitized_prompt);
+	cJSON_AddItemToArray(content, text_content);
+	
+	// Encode WAV audio to base64
+	ESP_LOGI("chat", "Encoding %d bytes of WAV audio to base64", wav_size);
+	std::string base64_audio = base64_encode(wav_data, wav_size);
+	ESP_LOGI("chat", "Base64 encoded audio size: %d bytes", base64_audio.length());
+	
+	// Free WAV data after encoding
+	free(wav_data);
+	
+	// Add audio content
+	cJSON *audio_content = cJSON_CreateObject();
+	if (!audio_content) {
+		cJSON_Delete(root);
+		ESP_LOGE("chat", "Failed to create audio content");
+		return std::string();
+	}
+	cJSON_AddStringToObject(audio_content, "type", "input_audio");
+	
+	cJSON *input_audio = cJSON_CreateObject();
+	if (!input_audio) {
+		cJSON_Delete(root);
+		ESP_LOGE("chat", "Failed to create input_audio object");
+		return std::string();
+	}
+	cJSON_AddStringToObject(input_audio, "data", base64_audio.c_str());
+	cJSON_AddStringToObject(input_audio, "format", "wav");
+	
+	cJSON_AddItemToObject(audio_content, "input_audio", input_audio);
+	cJSON_AddItemToArray(content, audio_content);
+	
+	cJSON_AddItemToArray(messages, user_msg);
+	
+	char *raw = cJSON_PrintUnformatted(root);
+	std::string payload;
+	if (raw) {
+		payload.assign(raw);
+		cJSON_free(raw);
+		ESP_LOGI("chat", "Payload built successfully, size: %d bytes", payload.length());
+	} else {
+		ESP_LOGE("chat", "Failed to serialize JSON");
+	}
+	cJSON_Delete(root);
+	return payload;
+}
+
 static std::string extract_assistant_reply(const std::string &response_body)
 {
 	if (response_body.empty()) {
@@ -293,55 +500,136 @@ static void log_http_error_details(esp_http_client_handle_t client, esp_err_t er
 	}
 }
 
-static void chat_send_event_cb(lv_event_t *e)
+static void chat_recording_task(void *arg)
+{
+	ESP_LOGI("chat", "Recording task started");
+	
+	// Record audio in chunks (like the working example)
+	audio_playback_read_chunked(voice_buffer, voice_buffer_size, 512);
+	
+	ESP_LOGI("chat", "Audio recording completed");
+	
+	// Auto-transition to review state
+	voice_recording = false;
+	voice_recorded = true;
+	
+	// Update button label
+	lv_obj_t *label = lv_obj_get_child(chat_voice_btn, 0);
+	if (label) {
+		lv_label_set_text(label, LV_SYMBOL_CALL " Send");
+	}
+	
+	chat_update_status("Playing back audio...");
+	
+	// Play back the recorded audio so user can hear it
+	audio_playback_write(voice_buffer, voice_buffer_size);
+	
+	// Update status after playback starts
+	vTaskDelay(pdMS_TO_TICKS(200));
+	chat_update_status("Tap Send or Voice again");
+	
+	// Task deletes itself
+	vTaskDelete(NULL);
+}
+
+static void chat_voice_event_cb(lv_event_t *e)
 {
 	if (lv_event_get_code(e) != LV_EVENT_CLICKED) {
 		return;
 	}
-	if (!chat_input || !chat_send_btn) {
-		return;
-	}
+	
 	if (chat_in_progress) {
 		chat_update_status("Chat busy");
 		return;
 	}
-	const char *text = lv_textarea_get_text(chat_input);
-	if (!text || text[0] == '\0') {
-		text = CHAT_DEFAULT_PROMPT;
-		lv_textarea_set_text(chat_input, CHAT_DEFAULT_PROMPT);
-		lv_textarea_set_cursor_pos(chat_input, LV_TEXTAREA_CURSOR_LAST);
-	}
-	size_t len = strlen(text);
-	if (len > CHAT_PROMPT_MAX_LEN) {
-		len = CHAT_PROMPT_MAX_LEN;
-	}
-	char *prompt_copy = static_cast<char *>(malloc(len + 1));
-	if (!prompt_copy) {
-		chat_update_status("Out of memory");
-		return;
-	}
-	memcpy(prompt_copy, text, len);
-	prompt_copy[len] = '\0';
-
-	if (!chat_request_queue) {
-		free(prompt_copy);
-		chat_update_status("Chat queue missing");
-		return;
-	}
-
-	chat_request_t request = {
-		.prompt = prompt_copy,
-	};
-	if (xQueueSend(chat_request_queue, &request, pdMS_TO_TICKS(10)) == pdPASS) {
-		chat_in_progress = true;
-		lv_obj_add_state(chat_send_btn, LV_STATE_DISABLED);
-		chat_update_status("Contacting OpenRouter...");
-		chat_update_output("");
-		lv_textarea_set_text(chat_input, CHAT_DEFAULT_PROMPT);
-		lv_textarea_set_cursor_pos(chat_input, LV_TEXTAREA_CURSOR_LAST);
-	} else {
-		free(prompt_copy);
-		chat_update_status("Chat queue full");
+	
+	// State machine: idle -> recording -> recorded (playing back) -> send
+	if (!voice_recording && !voice_recorded) {
+		// State 1: Start recording
+		voice_recording = true;
+		chat_update_status("Recording voice...");
+		
+		// Allocate buffer for 5 seconds of audio: 16kHz * 2 channels * 2 bytes * 5 seconds
+		voice_buffer_size = 16000 * 2 * 2 * 5;
+		voice_buffer = (uint8_t *)heap_caps_malloc(voice_buffer_size, MALLOC_CAP_SPIRAM);
+		
+		if (!voice_buffer) {
+			chat_update_status("Out of memory");
+			voice_recording = false;
+			return;
+		}
+		
+		// Update button label immediately so UI is responsive
+		lv_obj_t *label = lv_obj_get_child(chat_voice_btn, 0);
+		if (label) {
+			lv_label_set_text(label, LV_SYMBOL_STOP " Recording");
+		}
+		
+		// Force UI update
+		lv_refr_now(NULL);
+		
+		ESP_LOGI("chat", "Starting audio recording: %d bytes", voice_buffer_size);
+		
+		// Start recording in background task so UI stays responsive
+		xTaskCreatePinnedToCore(chat_recording_task, "chat_record", 4096, NULL, 5, NULL, 1);
+		
+	} else if (!voice_recording && voice_recorded) {
+		// State 2: User confirmed, send to AI
+		voice_recorded = false;
+		
+		// Update button label back to normal
+		lv_obj_t *label = lv_obj_get_child(chat_voice_btn, 0);
+		if (label) {
+			lv_label_set_text(label, LV_SYMBOL_AUDIO " Voice");
+		}
+		
+		chat_update_status("Encoding audio...");
+		
+		// Create a copy of the audio buffer for the request
+		uint8_t *audio_copy = (uint8_t *)malloc(voice_buffer_size);
+		if (!audio_copy) {
+			chat_update_status("Out of memory");
+			if (voice_buffer) {
+				free(voice_buffer);
+				voice_buffer = NULL;
+			}
+			return;
+		}
+		memcpy(audio_copy, voice_buffer, voice_buffer_size);
+		
+		ESP_LOGI("chat", "Sending %d bytes of audio to AI", voice_buffer_size);
+		
+		// Send audio directly to OpenRouter
+		if (chat_request_queue) {
+			chat_request_t request = {
+				.prompt = strdup("Please transcribe and respond to this audio."),
+				.audio_data = audio_copy,
+				.audio_size = voice_buffer_size,
+				.is_audio = true
+			};
+			
+			if (xQueueSend(chat_request_queue, &request, pdMS_TO_TICKS(10)) == pdPASS) {
+				chat_in_progress = true;
+				if (chat_voice_btn) {
+					lv_obj_add_state(chat_voice_btn, LV_STATE_DISABLED);
+				}
+				chat_update_status("Sending audio to AI...");
+				chat_update_output("");
+			} else {
+				free(request.prompt);
+				free(audio_copy);
+				chat_update_status("Chat queue full");
+			}
+		} else {
+			free(audio_copy);
+			chat_update_status("Chat queue missing");
+		}
+		
+		// Clean up voice buffer
+		if (voice_buffer) {
+			free(voice_buffer);
+			voice_buffer = NULL;
+		}
 	}
 }
 
@@ -374,29 +662,23 @@ static void create_chat_ui(lv_ui *ui)
 	lv_obj_set_width(chat_status_label, LV_PCT(100));
 	lv_obj_set_style_text_color(chat_status_label, lv_color_hex(0xffffff), LV_PART_MAIN);
 
+	// Make output larger since we removed input area
 	chat_output = lv_textarea_create(chat_panel);
-	lv_obj_set_size(chat_output, 156, 200);
+	lv_obj_set_size(chat_output, 156, 272);  // Increased height from 200 to 272
 	lv_obj_set_pos(chat_output, 0, 32);
 	lv_textarea_set_text(chat_output, "");
 	lv_textarea_set_max_length(chat_output, 1024);
 	lv_textarea_set_cursor_click_pos(chat_output, false);
 	chat_textarea_set_read_only(chat_output, true);
 
-	chat_input = lv_textarea_create(chat_panel);
-	lv_obj_set_size(chat_input, 156, 64);
-	lv_obj_set_pos(chat_input, 0, 236);
-	lv_textarea_set_max_length(chat_input, CHAT_PROMPT_MAX_LEN);
-	lv_textarea_set_text(chat_input, CHAT_DEFAULT_PROMPT);
-	lv_textarea_set_placeholder_text(chat_input, "Default prompt will be used");
-	lv_textarea_set_cursor_pos(chat_input, LV_TEXTAREA_CURSOR_LAST);
-
-	chat_send_btn = lv_btn_create(chat_panel);
-	lv_obj_set_size(chat_send_btn, 156, 40);
-	lv_obj_set_pos(chat_send_btn, 0, 308);
-	lv_obj_add_event_cb(chat_send_btn, chat_send_event_cb, LV_EVENT_CLICKED, NULL);
-	lv_obj_t *send_label = lv_label_create(chat_send_btn);
-	lv_label_set_text(send_label, "Send");
-	lv_obj_center(send_label);
+	// Voice button - centered at bottom
+	chat_voice_btn = lv_btn_create(chat_panel);
+	lv_obj_set_size(chat_voice_btn, 156, 40);  // Full width
+	lv_obj_set_pos(chat_voice_btn, 0, 308);
+	lv_obj_add_event_cb(chat_voice_btn, chat_voice_event_cb, LV_EVENT_CLICKED, NULL);
+	lv_obj_t *voice_label = lv_label_create(chat_voice_btn);
+	lv_label_set_text(voice_label, LV_SYMBOL_AUDIO " Voice");
+	lv_obj_center(voice_label);
 
 	chat_update_status("Wi-Fi not connected");
 }
@@ -414,9 +696,12 @@ static void chat_worker_task(void *arg)
 			ESP_LOGW("chat", "Queue receive failed");
 			continue;
 		}
-		ESP_LOGI("chat", "=== Received chat request from queue ===");
+		ESP_LOGI("chat", "=== Received chat request from queue (audio: %s) ===", request.is_audio ? "yes" : "no");
 		if (!request.prompt) {
 			ESP_LOGW("chat", "Received null prompt");
+			if (request.is_audio && request.audio_data) {
+				free(request.audio_data);
+			}
 			continue;
 		}
 		ESP_LOGI("chat", "=== Chat request prompt: '%s' ===", request.prompt);
@@ -425,9 +710,12 @@ static void chat_worker_task(void *arg)
 			chat_update_status("Set OpenRouter API key");
 			chat_update_output("");
 			free(request.prompt);
+			if (request.is_audio && request.audio_data) {
+				free(request.audio_data);
+			}
 			chat_in_progress = false;
-			if (chat_send_btn) {
-				lv_obj_clear_state(chat_send_btn, LV_STATE_DISABLED);
+			if (chat_voice_btn) {
+				lv_obj_clear_state(chat_voice_btn, LV_STATE_DISABLED);
 			}
 			continue;
 		}
@@ -442,9 +730,12 @@ static void chat_worker_task(void *arg)
 			vTaskDelay(pdMS_TO_TICKS(100));
 			chat_update_output("");
 			free(request.prompt);
+			if (request.is_audio && request.audio_data) {
+				free(request.audio_data);
+			}
 			chat_in_progress = false;
-			if (chat_send_btn) {
-				lv_obj_clear_state(chat_send_btn, LV_STATE_DISABLED);
+			if (chat_voice_btn) {
+				lv_obj_clear_state(chat_voice_btn, LV_STATE_DISABLED);
 			}
 			continue;
 		}
@@ -470,7 +761,17 @@ static void chat_worker_task(void *arg)
 		chat_update_status("Building request...");
 		vTaskDelay(pdMS_TO_TICKS(100));  // Give UI time to update
 		
-		std::string payload = build_chat_payload(request.prompt);
+		std::string payload;
+		if (request.is_audio && request.audio_data && request.audio_size > 0) {
+			ESP_LOGI("chat", "=== Building audio payload with %d bytes of audio ===", request.audio_size);
+			payload = build_chat_payload_with_audio(request.prompt, request.audio_data, request.audio_size);
+			// Free audio data after encoding
+			free(request.audio_data);
+			request.audio_data = NULL;
+		} else {
+			payload = build_chat_payload(request.prompt);
+		}
+		
 		std::string response_body;
 		esp_err_t err = ESP_FAIL;
 		int http_status = -1;
@@ -530,11 +831,8 @@ static void chat_worker_task(void *arg)
 					chat_update_status("Connection failed");
 					free(request.prompt);
 					chat_in_progress = false;
-					if (chat_send_btn) {
-						lv_obj_clear_state(chat_send_btn, LV_STATE_DISABLED);
-					}
-					if (chat_input) {
-						chat_textarea_set_read_only(chat_input, false);
+					if (chat_voice_btn) {
+						lv_obj_clear_state(chat_voice_btn, LV_STATE_DISABLED);
 					}
 					continue;
 				}
@@ -552,11 +850,8 @@ static void chat_worker_task(void *arg)
 					chat_update_status("Write failed");
 					free(request.prompt);
 					chat_in_progress = false;
-					if (chat_send_btn) {
-						lv_obj_clear_state(chat_send_btn, LV_STATE_DISABLED);
-					}
-					if (chat_input) {
-						chat_textarea_set_read_only(chat_input, false);
+					if (chat_voice_btn) {
+						lv_obj_clear_state(chat_voice_btn, LV_STATE_DISABLED);
 					}
 					continue;
 				}
@@ -659,8 +954,8 @@ static void chat_worker_task(void *arg)
 		free(request.prompt);
 
 		chat_in_progress = false;
-		if (chat_send_btn) {
-			lv_obj_clear_state(chat_send_btn, LV_STATE_DISABLED);
+		if (chat_voice_btn) {
+			lv_obj_clear_state(chat_voice_btn, LV_STATE_DISABLED);
 		}
 	}
 }

@@ -3,4 +3,4 @@ idf_component_register(
   
   INCLUDE_DIRS "."
 
-  REQUIRES lvgl ui_bsp esp-tls esp_http_client esp_wifi esp_netif freertos cjson lwip esp_wifi_bsp)
+  REQUIRES lvgl ui_bsp esp-tls esp_http_client esp_wifi esp_netif freertos cjson lwip esp_wifi_bsp audio_bsp)
