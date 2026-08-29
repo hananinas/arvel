@@ -1,8 +1,10 @@
 #include "ai_chat_bsp.h"
 #include "esp_wifi_bsp.h"
 #include "user_audio_bsp.h"
+#include "sdcard_bsp.h"
 #include <stdio.h>
 #include <string>
+#include <vector>
 #include <cstring>
 #include <cstdlib>
 #include <time.h>
@@ -21,6 +23,8 @@
 #define OPENROUTER_URL "https://openrouter.ai/api/v1/chat/completions"
 #define OPENROUTER_HTTP_REFERER "https://example.local/esp32"
 #define OPENROUTER_TITLE "ESP32 Touch Panel"
+#define CHAT_HISTORY_FILE "/sdcard/chat_history.json"
+#define MAX_HISTORY_MESSAGES 20  // Keep last 20 messages (10 user + 10 assistant)
 
 #define CHAT_QUEUE_LENGTH 2
 #define CHAT_PROMPT_MAX_LEN 512
@@ -58,6 +62,11 @@ typedef struct {
 	bool is_audio;
 } chat_request_t;
 
+typedef struct {
+	std::string role;      // "user" or "assistant"
+	std::string content;   // Message text
+} chat_message_t;
+
 // Module state
 static std::string s_api_key = "<REPLACE_WITH_YOUR_OPENROUTER_API_KEY>";
 static std::string s_model = "openai/gpt-4o";
@@ -75,6 +84,7 @@ static bool voice_recording = false;
 static bool voice_recorded = false;  // New state: audio ready to send
 static uint8_t *voice_buffer = NULL;
 static size_t voice_buffer_size = 0;
+static std::vector<chat_message_t> chat_history;  // Conversation history
 
 // Forward declarations
 static void chat_worker_task(void *arg);
@@ -94,6 +104,11 @@ static std::string extract_assistant_reply(const std::string &response_body);
 static void initialize_sntp(void);
 static bool wait_for_time_sync(int timeout_sec);
 static void log_http_error_details(esp_http_client_handle_t client, esp_err_t err);
+// Chat history functions
+static void save_chat_history(void);
+static void load_chat_history(void);
+static void add_to_history(const std::string &role, const std::string &content);
+static void clear_chat_history(void);
 
 static void chat_update_status(const char *text)
 {

@@ -11,8 +11,10 @@
 #include "user_audio_bsp.h"
 #include "freertos/event_groups.h"
 #include "ai_chat_bsp.h"
+#include "web_server.h"
 
 static const char *TAG = "user_app";
+static httpd_handle_t web_server = NULL;
 
 lv_ui src_ui;
 esp_io_expander_handle_t io_expander = NULL;
@@ -38,9 +40,7 @@ void user_app_init(void)
 	
 	// Show AI chat screen and hide demo screens
 	lv_obj_clear_flag(src_ui.screen_cont_4, LV_OBJ_FLAG_HIDDEN);  // Show AI chat
-	lv_obj_add_flag(src_ui.screen_cont_1, LV_OBJ_FLAG_HIDDEN);    // Hide red demo screen
-	lv_obj_add_flag(src_ui.screen_cont_2, LV_OBJ_FLAG_HIDDEN);    // Hide other screens
-	lv_obj_add_flag(src_ui.screen_cont_3, LV_OBJ_FLAG_HIDDEN);    // Hide other screens
+	
 	
 	// Initialize WiFi
 	espwifi_init();
@@ -48,7 +48,7 @@ void user_app_init(void)
 	// Initialize AI Chat with OpenRouter
 	ai_chat_init(&src_ui, wifi_even_);
 	ai_chat_set_api_key("");
-	ai_chat_set_model("google/gemini-2.0-flash-exp");
+	ai_chat_set_model("google/gemini-2.5-flash-preview-09-2025");
 	
 	// Initialize LCD backlight PWM
 	lcd_bl_pwm_bsp_init(LCD_PWM_MODE_255);
@@ -59,6 +59,16 @@ void user_app_init(void)
 	// Initialize audio codec
 	user_audio_bsp_init();
 	audio_play_init();
-	
+
+	// Start web server (after WiFi is initialized)
+	ESP_LOGI(TAG, "Starting web server...");
+	web_server = web_server_start();
+	if (web_server) {
+		ESP_LOGI(TAG, "Web server started successfully");
+		ESP_LOGI(TAG, "Access web interface at: http://<device-ip>/");
+	} else {
+		ESP_LOGE(TAG, "Failed to start web server");
+	}
+
 	ESP_LOGI(TAG, "AI Audio Chat application ready");
 }

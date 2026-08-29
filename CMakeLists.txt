@@ -4,5 +4,18 @@
 # CMakeLists in this exact order for cmake to work correctly
 cmake_minimum_required(VERSION 3.16)
 
+# Find Python3 for build scripts
+find_package(Python3 REQUIRED COMPONENTS Interpreter)
+
+# Set extra component directories to include interface
+set(EXTRA_COMPONENT_DIRS "interface")
+
+# Add compile definitions for web interface
+add_compile_definitions(
+    EMBED_WWW
+    APP_NAME="Unravel-Agent"
+    APP_VERSION="1.0.0"
+)
+
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(11_FactoryProgram)

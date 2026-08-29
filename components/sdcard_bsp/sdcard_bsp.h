@@ -1,6 +1,8 @@
 #ifndef SDCARD_BSP_H
 #define SDCARD_BSP_H
-#include "driver/sdmmc_host.h"
+#include "driver/sdmmc_types.h"
+#include "esp_err.h"
+#include "freertos/event_groups.h"
 
 
 typedef struct

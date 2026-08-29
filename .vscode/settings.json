@@ -4,7 +4,8 @@
         ".fantomasignore": "ignore",
         "string": "cpp",
         "cstdlib": "cpp",
-        "cstring": "cpp"
+        "cstring": "cpp",
+        "vector": "cpp"
     },
     "idf.port": "/dev/ttyACM0",
     "idf.flashType": "JTAG"
