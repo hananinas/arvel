@@ -1,5 +1,5 @@
-file(GLOB_RECURSE scrld ./*.c)
+file(GLOB ARVEL_FONTS "${CMAKE_CURRENT_LIST_DIR}/fonts/*.c")
 idf_component_register(
-  SRCS ${scrld}
+  SRCS "buddy_ui.c" "arvel_art.c" ${ARVEL_FONTS}
   REQUIRES lvgl
-  INCLUDE_DIRS "custom" "generated" "generated/guider_customer_fonts")
+  INCLUDE_DIRS "." "custom")

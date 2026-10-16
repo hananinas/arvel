@@ -1,10 +1,9 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount } from 'svelte';
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import InputPassword from '$lib/components/InputPassword.svelte';
 	import SettingsCard from '$lib/components/SettingsCard.svelte';
-	import { user } from '$lib/stores/user';
 	import { page } from '$app/state';
 	import { notifications } from '$lib/components/toasts/notifications';
 	import Spinner from '$lib/components/Spinner.svelte';
@@ -13,25 +12,25 @@
 	import Client from '~icons/tabler/robot';
 	import type { MQTTSettings, MQTTStatus } from '$lib/types/models';
 
-	let mqttSettings: MQTTSettings = $state();
-	let mqttStatus: MQTTStatus = $state();
-
-	let formField: any = $state();
+	let mqttSettings: MQTTSettings | undefined = $state();
+	let mqttStatus: MQTTStatus | undefined = $state();
+	let settingsLoading = $state(true);
+	let statusLoading = $state(true);
 
 	async function getMQTTStatus() {
 		try {
 			const response = await fetch('/rest/mqttStatus', {
 				method: 'GET',
 				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
 					'Content-Type': 'application/json'
 				}
 			});
-			mqttStatus = await response.json();
+			mqttStatus = response.ok ? (await response.json()) ?? undefined : undefined;
 		} catch (error) {
+			mqttStatus = undefined;
 			console.error('Error:', error);
 		}
-		return mqttStatus;
+		statusLoading = false;
 	}
 
 	async function getMQTTSettings() {
@@ -39,27 +38,24 @@
 			const response = await fetch('/rest/mqttSettings', {
 				method: 'GET',
 				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
 					'Content-Type': 'application/json'
 				}
 			});
-			mqttSettings = await response.json();
+			mqttSettings = response.ok ? (await response.json()) ?? undefined : undefined;
 		} catch (error) {
+			mqttSettings = undefined;
 			console.error('Error:', error);
 		}
-		return mqttSettings;
+		settingsLoading = false;
 	}
 
-	const interval = setInterval(async () => {
-		getMQTTStatus();
-	}, 5000);
-
-	onDestroy(() => clearInterval(interval));
-
 	onMount(() => {
-		if (!page.data.features.security || $user.admin) {
-			getMQTTSettings();
+		void getMQTTStatus();
+		const interval = setInterval(() => void getMQTTStatus(), 5000);
+		if (!page.data.features.security) {
+			void getMQTTSettings();
 		}
+		return () => clearInterval(interval);
 	});
 
 	let formErrors = $state({
@@ -75,7 +71,6 @@
 			const response = await fetch('/rest/mqttSettings', {
 				method: 'POST',
 				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
 					'Content-Type': 'application/json'
 				},
 				body: JSON.stringify(data)
@@ -92,7 +87,9 @@
 		return;
 	}
 
-	function handleSubmitMQTT() {
+	function handleSubmitMQTT(event: SubmitEvent) {
+		event.preventDefault();
+		if (!mqttSettings) return;
 		let valid = true;
 
 		// Validate Server URI
@@ -127,16 +124,9 @@
 		// Submit JSON to REST API
 		if (valid) {
 			postMQTTSettings(mqttSettings);
-			//alert('Form Valid');
 		}
 	}
 
-	function preventDefault(fn) {
-		return function (event) {
-			event.preventDefault();
-			fn.call(this, event);
-		};
-	}
 </script>
 
 <SettingsCard collapsible={false}>
@@ -147,9 +137,9 @@
 		<span>MQTT</span>
 	{/snippet}
 	<div class="w-full">
-		{#await getMQTTStatus()}
+		{#if statusLoading}
 			<Spinner />
-		{:then nothing}
+		{:else if mqttStatus}
 			<div
 				class="flex w-full flex-col space-y-1"
 				transition:slide|local={{ duration: 300, easing: cubicOut }}
@@ -192,19 +182,23 @@
 					</div>
 				</div>
 			</div>
-		{/await}
+		{:else}
+			<p role="status">MQTT status unavailable.</p>
+		{/if}
 	</div>
 
-	{#if !page.data.features.security || $user.admin}
-		<Collapsible open={false} class="shadow-lg" icon={null} opened={() => {}} closed={() => {}}>
+	{#if !page.data.features.security}
+		<Collapsible open={false} class="shadow-lg">
 			{#snippet title()}
 				<span>Change MQTT Settings</span>
 			{/snippet}
 
+			{#if settingsLoading}
+				<Spinner />
+			{:else if mqttSettings}
 			<form
-				onsubmit={preventDefault(handleSubmitMQTT)}
+				onsubmit={handleSubmitMQTT}
 				novalidate
-				bind:this={formField}
 				class="fieldset"
 			>
 				<div class="grid w-full grid-cols-1 content-center gap-x-4 gap-y-2 sm:grid-cols-2">
@@ -325,6 +319,9 @@
 					<button class="btn btn-primary" type="submit">Apply Settings</button>
 				</div>
 			</form>
+			{:else}
+				<p role="status">MQTT settings unavailable.</p>
+			{/if}
 		</Collapsible>
 	{/if}
 </SettingsCard>

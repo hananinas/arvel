@@ -1,0 +1,38 @@
+<svg width="640" height="172" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 172" preserveAspectRatio="xMidYMid slice">
+      <rect width="640" height="172" fill="#DCEBE4"></rect>
+      <rect y="92" width="640" height="80" fill="#E6EFE3"></rect>
+      <circle cx="560" cy="42" r="30" fill="#F5E7BF" opacity="0.7"></circle>
+      <circle cx="560" cy="42" r="18" fill="#F4D27E"></circle>
+      <g fill="#FFFFFF" opacity="0.9">
+        <animateTransform attributeName="transform" type="translate" values="0 0;-18 0;0 0" dur="24s" repeatCount="indefinite"></animateTransform>
+        <ellipse cx="478" cy="30" rx="24" ry="8"></ellipse>
+        <ellipse cx="492" cy="24" rx="13" ry="9"></ellipse>
+        <ellipse cx="300" cy="20" rx="20" ry="7"></ellipse>
+        <ellipse cx="610" cy="78" rx="18" ry="6"></ellipse>
+      </g>
+      <path d="M0 128 C 80 104 150 112 230 122 C 320 134 400 100 480 108 C 560 116 600 104 640 110 L640 172 L0 172Z" fill="#B7D2BF"></path>
+      <g fill="#6E9C7E">
+        <circle cx="510" cy="116" r="13"></circle>
+        <circle cx="532" cy="108" r="18"></circle>
+        <circle cx="556" cy="118" r="12"></circle>
+        <circle cx="612" cy="112" r="15"></circle>
+      </g>
+      <g fill="#5A4636">
+        <rect x="530" y="120" width="4" height="18"></rect>
+        <rect x="610" y="122" width="4" height="16"></rect>
+      </g>
+      <path d="M0 150 C 100 136 200 140 300 146 C 420 154 520 132 640 138 L640 172 L0 172Z" fill="#93BB9F"></path>
+      <g fill="#F7F3E6">
+        <circle cx="470" cy="152" r="2"></circle>
+        <circle cx="500" cy="146" r="2"></circle>
+        <circle cx="590" cy="150" r="2"></circle>
+        <circle cx="360" cy="158" r="2"></circle>
+      </g>
+      <path d="M-10 160 C 50 152 110 156 196 147" stroke="#6B4E3D" stroke-width="9" fill="none" stroke-linecap="round"></path>
+      <path d="M128 154 C 144 142 154 136 170 132" stroke="#6B4E3D" stroke-width="4" fill="none" stroke-linecap="round"></path>
+      <g fill="#78A886">
+        <ellipse cx="174" cy="130" rx="9" ry="5" transform="rotate(-25 174 130)"></ellipse>
+        <ellipse cx="198" cy="143" rx="10" ry="5" transform="rotate(-15 198 143)"></ellipse>
+        <ellipse cx="150" cy="140" rx="8" ry="4" transform="rotate(30 150 140)"></ellipse>
+      </g>
+    </svg>

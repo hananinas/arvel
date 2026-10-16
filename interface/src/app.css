@@ -1,22 +1,95 @@
 @import "tailwindcss";
 @plugin "daisyui" {
-    themes: corporate --default, business --prefersdark;
+  themes: corporate --default;
 }
 
-/*
-  The default border color has changed to `currentcolor` in Tailwind CSS v4,
-  so we've added these compatibility styles to make sure everything still
-  looks the same as it did with Tailwind CSS v3.
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 400 700;
+  font-display: swap;
+  src: url('/fonts/inter-latin.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
 
-  If we ever want to remove these styles, we need to add an explicit border
-  color utility to any element that depends on these defaults.
-*/
-@layer base {
-  *,
-  ::after,
-  ::before,
-  ::backdrop,
-  ::file-selector-button {
-    border-color: var(--color-gray-200, currentcolor);
-  }
+/* Arvel design tokens (light). Scene-dependent screen colours live in $lib/theme.ts. */
+:root {
+  --ink: #252724;
+  --sub: #5c6660;
+  --faint: #a7aea9;
+  --accent: #456b67;
+  --accent-strong: #2f4f4b;
+  --accent-soft: #edf4f3;
+  --mic: #a65b48;
+  --ready: #628b7e;
+  --thinking: #d9a63a;
+  --chip-bg: #f2eeea;
+  --chip-ink: #725a50;
+  --paper: #fbfbf9;
+  --page: #eeefeb;
+  --rule: #e9eae6;
+  --rule-strong: #cdd2cd;
+  --toggle-off: #cdd2cd;
+  --shadow-panel: 0 6px 18px rgba(30, 40, 36, 0.14);
+  --shadow-button: 0 2px 8px rgba(30, 40, 36, 0.12);
+  --a-ink: #252724; --a-sub: #5c6660; --a-faint: #a7aea9; --a-accent: #456b67; --a-chipBg: #f2eeea; --a-rule: #e9eae6;
+  --a-toggleOff: #cdd2cd; --a-segOn: #ffffff;
+  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  color: var(--ink);
+  background: var(--page);
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  --color-base-100: #fbfbf9;
+  --color-base-200: #eeefeb;
+  --color-base-300: #e9eae6;
+  --color-base-content: #252724;
+  --color-primary: #456b67;
+  --color-primary-content: #ffffff;
+  --color-secondary: #a65b48;
+  --color-secondary-content: #ffffff;
+  --color-error: #a65b48;
+  --color-error-content: #ffffff;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 280px; background: var(--page); }
+button, input, textarea, select { font: inherit; }
+a, button, input, textarea, select, [tabindex]:not([tabindex="-1"]) { outline-offset: 3px; }
+:focus-visible { outline: 2px solid var(--accent); }
+
+.buddy-app { isolation: isolate; min-height: 100dvh; background: var(--page); color: var(--ink); display: flex; flex-direction: column; }
+.buddy-app > main { flex: 1; }
+.app-header { width: 100%; max-width: 1120px; margin: 0 auto; padding: 22px 32px 6px; display: flex; justify-content: space-between; align-items: center; gap: 20px; flex-wrap: wrap; }
+.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--ink); text-decoration: none; border-radius: 8px; min-height: 44px; }
+.wordmark { font-size: 22px; font-weight: 700; letter-spacing: -0.8px; }
+.brand-chip { background: var(--chip-bg); color: var(--chip-ink); font-size: 10px; font-weight: 700; letter-spacing: 0.4px; padding: 5px 9px; border-radius: 12px; white-space: nowrap; }
+.app-header nav { display: flex; gap: 2px; padding: 2px; border-radius: 12px; background: var(--chip-bg); }
+.app-header nav a { display: inline-flex; align-items: center; min-height: 36px; padding: 0 14px; border-radius: 10px; font-size: 13px; font-weight: 500; color: var(--ink); text-decoration: none; }
+.app-header nav a[aria-current="page"] { background: #fff; font-weight: 650; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+.app-header nav a:hover:not([aria-current="page"]) { background: rgba(255, 255, 255, 0.55); }
+.app-footer { padding: 24px 16px 28px; text-align: center; font-size: 12px; color: var(--sub); line-height: 1.6; }
+.skip-link { position: absolute; left: 16px; top: 8px; transform: translateY(-160%); padding: 10px 14px; background: var(--paper); border: 2px solid var(--accent); border-radius: 10px; z-index: 2; }
+.skip-link:focus { transform: translateY(0); }
+
+/* Shared controls in the design language. */
+.a-btn, .buddy-button { display: inline-flex; justify-content: center; align-items: center; gap: 8px; min-height: 40px; border: none; border-radius: 20px; padding: 0 18px; font-size: 13px; font-weight: 600; cursor: pointer; text-decoration: none; flex-shrink: 0; transition: background-color 120ms ease-out, opacity 120ms ease-out; }
+.a-btn.primary, .buddy-button { background: var(--accent); color: #fff; box-shadow: var(--shadow-button); }
+.a-btn.primary:hover:not(:disabled), .buddy-button:hover:not(:disabled) { background: var(--accent-strong); }
+.a-btn.ghost, .buddy-button.secondary { background: var(--chip-bg); color: var(--ink); box-shadow: none; }
+.a-btn.ghost:hover:not(:disabled), .buddy-button.secondary:hover:not(:disabled) { background: #e8e2dc; }
+.a-btn:disabled, .buddy-button:disabled { opacity: 0.45; cursor: not-allowed; box-shadow: none; }
+.eyebrow { color: var(--sub); font-size: 11px; font-weight: 700; letter-spacing: 0.6px; text-transform: uppercase; line-height: 1.5; }
+.muted { color: var(--sub); font-size: 12px; line-height: 1.5; }
+.notice { border-radius: 12px; background: var(--chip-bg); color: var(--chip-ink); padding: 10px 14px; font-size: 13px; line-height: 1.5; overflow-wrap: anywhere; }
+.notice.error { background: #f6e6e1; color: #7a3a2c; }
+.notice a { text-decoration: underline; text-underline-offset: 3px; font-weight: 600; color: inherit; }
+.modal-backdrop { position: fixed; inset: 0; z-index: 1; border: 0; background: rgb(37 39 36 / 28%); cursor: pointer; }
+@media (max-width: 640px) {
+  .app-header { padding: 16px 16px 4px; gap: 12px; }
+  .brand-chip { display: none; }
+  .app-header nav { width: 100%; flex-wrap: wrap; }
+  .app-header nav a { flex: 1 1 calc(50% - 4px); justify-content: center; min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }

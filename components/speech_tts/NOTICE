@@ -1,0 +1,185 @@
+Unravel local English speech component
+
+Vendored source: https://github.com/earlephilhower/BackgroundAudio
+Pinned commit: 2f64824954e899f0a86db6f4489294e90834a537
+Source subtree: src/libespeak-ng (eSpeak NG 1.52.0 embedded port).
+
+The engine and its English voice/dictionary/phoneme assets are GPL-3.0-or-later.
+Copyright notices are preserved in the upstream C sources. Primary copyright
+holders include Jonathan Duddington, Reece H. Dunn, and the eSpeak NG and
+BackgroundAudio contributors. Full GPL text: vendor/espeak-ng/COPYING.
+ucd-tools is also GPL-3.0-or-later; its Unicode-derived data retain their notices.
+The upstream ancillary COPYING.UCD, COPYING.BSD2 and COPYING.APACHE notices
+are retained. local_endian.h retains its public-domain/alternative-license notice.
+The new adapters and embedded-workspace modifications in this component are
+provided under GPL-3.0-or-later as well.
+
+This firmware links the GPL engine. Distribution of linked binaries requires
+compliance with the GPL, including providing corresponding source (including
+these adaptations) and the applicable license notices. This component is not
+an MIT-licensed substitute for eSpeak NG.
+
+Adaptations from the pinned source:
+- Replace the ARDUINO preprocessor guard name with ESPEAK_EMBEDDED, preserving
+  the upstream embedded-asset code paths without any Arduino headers/core.
+- Remove the Arduino voice wrapper; retain the original 140-byte English voice.
+- Build only synthesis runtime C sources, not file-based dictionary/phoneme
+  compilers, asynchronous FIFO workers, desktop audio, MBROLA, Klatt or Sonic.
+- Reserve and reuse clause, XML, phoneme and pitch scratch storage. On ESP-IDF,
+  the large buffers (including both persistent phoneme-list stages) use PSRAM.
+- Check translator/decoder allocations and initial voice-copy enqueue failures.
+- Use the NG status-returning API and synchronous retrieval callback. Streaming
+  rational linear interpolation converts 22050 Hz mono to 16000 Hz stereo signed
+  16-bit output in 256-frame chunks without retaining full utterance PCM.
+- Fix an internal SSML parameter call to use the built NG API instead of the
+  excluded desktop legacy API wrapper.
+
+Only English (Great Britain) voice and English dictionary are included.
+Shared indexed phoneme tables/waveforms and Unicode character data are retained
+intact because the English engine references them; other voices/dictionaries,
+Arduino wrappers, desktop tools and unrelated audio decoders are not included.
+All required synthesis assets are embedded read-only arrays; no runtime data
+filesystem, system eSpeak package, Arduino installation, or external speech
+service is needed. Call from a single worker with recording disabled and codec
+already opened at 16000 Hz, two channels, 16 bits/sample.
+
+Required private compile definitions:
+ESPEAK_EMBEDDED=1 USE_ASYNC=0 USE_MBROLA=0 USE_KLATT=0
+USE_LIBSONIC=0 USE_LIBPCAUDIO=0
+Exact synthesis C source set is explicitly listed in CMakeLists.txt; libm is
+required. The IDF dependencies are audio_bsp and heap. The host build has only
+standard C/C++ libraries, libm and CMake/compiler dependencies.
+
+Embedded read-only asset footprint (actual array bytes, excluding alignment):
+English dictionary 168204; English voice 140; phondata 554740;
+phonindex 43316; phontab 58652; intonations 2312. Total: 827364 bytes.
+Engine machine code and Unicode tables additionally consume flash; the final
+linked IDF map is authoritative for total flash/static RAM consumption.
+
+ESP32 32-bit layout workspace payload: 89650 bytes PSRAM retained and reused
+for the engine lifetime (allocator overhead additional). Formula:
+804*sizeof(short) + 600*sizeof(WORD_TAB) + 800 +
+1000*sizeof(PHONEME_LIST2) + 2001*sizeof(PHONEME_LIST) +
+1001*sizeof(SYLLABLE) + 501*sizeof(wchar_t).
+The engine's 60ms mono output buffer is 2648 bytes and its event list contains
+32 espeak_EVENT entries. Translator/voice/decoder and other small engine state
+are additional. Adapter PCM storage is 1024 bytes on the existing chat-worker
+stack. There is no full-reply audio allocation and no per-clause scratch churn.
+PSRAM allocation failures and codec failures are returned to the caller.
+
+Host smoke commands (executed during parent verification):
+cmake -S components/speech_tts -B /tmp/unravel-speech-host
+cmake --build /tmp/unravel-speech-host -j2
+/tmp/unravel-speech-host/speech_tts_smoke /tmp/english-a.pcm "Hello Unravel."
+/tmp/unravel-speech-host/speech_tts_smoke /tmp/english-b.pcm "Hello Unravel."
+cmp /tmp/english-a.pcm /tmp/english-b.pcm
+ffplay -f s16le -ar 16000 -ac 2 /tmp/english-a.pcm
+
+The host executable uses the production speech_tts_speak, engine and converter.
+Its only hardware substitution is audio_playback_write_checked. It checks
+nonzero samples, stereo duplication, bounded writes, propagated output failure
+and recovery. Separate process output comparison checks deterministic waveform
+with the fixed random seed. ffplay is optional, not a build dependency.
+
+Native Codex subscription voice (experimental provider compatibility)
+------------------------------------------------------------------
+The local eSpeak pipeline above is retained unchanged. The optional Codex path
+is native WebRTC Opus plus an authenticated provider sideband, not LAN bridge
+PCM, paid API speech, paid STT, or a local fallback. No account/setup HTTP route
+starts capture. Read-aloud has no microphone task, reads only an already quoted
+8192-byte passage, requires canonical assistant turn.done plus audible/drained
+playback, and is bounded to 125 seconds after readiness and 150 seconds decoded
+audio. Stop is latched before queued read-aloud/authentication starts.
+
+Protocol facts were inspected against OpenAI Codex commit
+72f999edc7848961b99c4b98bf1e62d12fa35798, particularly
+codex-api/src/endpoint/realtime_call.rs and realtime_websocket/
+protocol_frameless_bidi.rs and methods_frameless_bidi.rs. OpenAI Codex is
+Apache-2.0, Copyright 2025 OpenAI; upstream LICENSE and NOTICE are at
+https://github.com/openai/codex/tree/72f999edc7848961b99c4b98bf1e62d12fa35798.
+The session uses gpt-live-1-codex with client delegation, the ChatGPT backend
+realtime/calls quicksilver/avas JSON shape, Codex Desktop 0.159.0 headers, and
+wss://api.openai.com/v1/live/<validated-call-id>. Subscription eligibility and
+future undocumented-provider compatibility remain provider/hardware gates.
+Context text is split on UTF-8 boundaries into <=500-byte input_text chunks.
+Mirrored event/item identities and independent ordered-source turn ordinals
+deduplicate delivery without merging identical text in later turns.
+
+Required managed SDKs: espressif/esp_peer 1.5.7, esp_audio_codec 2.6.2 and
+esp_libsrtp 1.0.0. esp_peer and esp_audio_codec use the Espressif Modified MIT
+license, Copyright 2025 Espressif Systems (Shanghai) CO., LTD. Their licenses
+restrict use/distribution to Espressif products, and require retaining copyright
+and permission notices; see each managed component's LICENSE. This restriction
+is not ordinary MIT. Review compatibility with the linked GPL eSpeak engine
+before distributing combined firmware; private device use is not a grant to
+redistribute incompatible combined binaries. libsrtp retains its upstream BSD
+notices and bundled cryptographic notices. SDK archives remain SDK dependencies,
+not vendored copies in this component.
+
+Only specific esp_opus_enc_open/get_frame_size/process/reset/close and
+esp_opus_dec_open/decode/close APIs are linked by the adapter; no all-codec
+registry. PCM is native 16000 Hz stereo PCM16, Opus frames are 20 ms on capture;
+SDP and RTP scaling remain standard opus/48000/2. esp_peer_open/new_connection/
+send_msg/main_loop/send_audio/create_data_channel/close provide ICE, DTLS-SRTP
+and SCTP. Google STUN (stun.l.google.com:19302) gathers public ICE candidates;
+it cannot authorize the peer. Locally created oai-events is explicitly reliable
+and ordered, with manual_ch_create=true, and automatic reconnect is disabled.
+
+Peer identity security is enforced, not inferred from encrypted media.
+The shipped SDK DTLS source accepts optional PKI verification and does not bind
+the certificate to SDP. The component linker wraps dtls_srtp_handshake; the S3
+archive has an external R_XTENSA_32 relocation to that symbol in
+peer_on_connecting's literal pool (offset 0x2c), and an R_XTENSA_ASM_EXPAND call
+relocation at offset 0x06. The wrapper compares the actual peer leaf DER SHA-256
+with the fingerprint from the verified-HTTPS answer before returning success
+to the peer state machine. Missing/conflicting/non-SHA-256 fingerprints and
+mismatching/missing certificates fail closed with a fixed credential-free error.
+The negotiated SRTP profile must also be authenticated AES128_CM_HMAC_SHA1
+(80- or 32-bit tag); the SDK's advertised NULL-encryption profiles are rejected.
+The only private ABI member read is dtls_srtp_t.ssl; shipped S3 DWARF places it
+at offset 8, guarded at compile time together with 32-bit S3/IDF5-6 constraints.
+Retain CONFIG_MBEDTLS_SSL_KEEP_PEER_CERTIFICATE, DTLS and DTLS-SRTP. Re-audit
+the hook, ELF call target and ABI on SDK/target upgrades. The native-only
+speech_live_peer_security_smoke signaling-callback seam exercises the production
+esp_peer task/answer parser/real handshake, never mic or credentials. Its negative
+mode corrupts only the expected digest and must return the fixed fingerprint
+failure after a real handshake; a direct unit call to the wrapper is not proof.
+
+HTTPS uses the certificate bundle and hostname verification, no redirects.
+The sideband reuses the hardened TLS WebSocket parser, requiring a verified
+api.openai.com TLS connection and a checked HTTP 101/Sec-WebSocket-Accept, with
+no extension negotiation or binary audio. esp_websocket_client 1.8.0 was
+inspected but is not used here: it follows 3xx redirects on IDF>=5.5.1 without
+a disable-redirect configuration. Ready requires both the verified peer/
+oai-events channel and session.started/updated on the authenticated sideband.
+The adapter logs no tokens, remote errors, SDP, peer addresses or provider bodies.
+SDK transport diagnostics may log ICE addresses; these are not account tokens.
+
+Runtime bounds (SDK/JSON/codec allocator overhead additional):
+- Four internal-stack tasks at priority 5: control 8192 bytes, peer 8192,
+  capture 4096 (conversation only), playback 4096. All media/peer tasks join
+  before TLS/queue/context destruction and the terminal closed callback.
+- PSRAM fixed packet pools: 8 Tx slots (<=1275 encoded bytes each) and 16 Rx
+  slots (<=7650 bytes each, <=120 ms Opus); ready/free queues transfer pointers.
+  Encoder writes straight into pooled Tx packets; Rx payload is copied once
+  from SDK-owned memory, decoded directly, and PCM is written without copies.
+  Shared fixed PCM scratch is 1280 capture plus 7680 decoder bytes.
+- Four provider-event slots, each <=65536 bytes in PSRAM; four context slots,
+  each <=16384 bytes plus the delegation prefix; one 65537-byte control scratch,
+  two 16385-byte SDP buffers, and bounded PSRAM transcript/identity storage.
+  Media pressure is bounded to 2 seconds; event/context pressure ends the call
+  rather than dropping finalized transcripts or growing queues.
+- SDK data caches: 8192 send / 69632 receive bytes; audio jitter 32768 bytes/
+  100 ms; RTP send pool 16384 bytes/16 metadata slots/two resend attempts.
+  Eight gathered ICE candidates; authenticated answer accepts <=16 candidates,
+  <=16384 SDP bytes, <=1024 bytes/line, and only matching SHA-256 fingerprints.
+- Transcript text <=8192 bytes, JSON nesting <=16, 128 recent stable event
+  identities, 64 delegation identities / four pending delegations.
+  Muting increments capture generation, clears queued packet ownership, resets
+  encoder state on the next generation and gates the peer hand-off boundary.
+  Already handed-off RTP cannot be revoked. RMS echo gating is not AEC.
+
+Build, real mismatched-certificate handshake rejection, account signaling,
+ICE/NAT compatibility, sustained duplex Opus/codec playback, mute and Stop
+timing must be verified on the final integrated S3 firmware; no such hardware
+or provider result is implied by these source/SDK observations.

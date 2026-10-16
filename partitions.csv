@@ -1,11 +1,12 @@
 # ESP-IDF Partition Table
 # Name, Type, SubType, Offset, Size, Flags
-# Increased NVS for settings, added OTA partitions for firmware updates
-# Factory app includes embedded web interface (WWWData.h)
+# Native voice and SQLite use two 6 MiB OTA slots; no separate factory slot.
+# Preserve original NVS, NVS-key and storage offsets during an approved migration.
 nvs,      data, nvs,     0x9000,   0x6000,
 phy_init, data, phy,     0xf000,   0x1000,
-factory,  app,  factory, 0x10000,  3M,
-ota_0,    app,  ota_0,   ,         3M,
-ota_1,    app,  ota_1,   ,         3M,
-nvs_key,  data, nvs_keys,,         0x1000,
-storage,  data, spiffs,  ,         0x100000,
+# Both app slots have headroom for the native archive/controller integration.
+ota_0,    app,  ota_0,   0x10000,  0x600000,
+ota_1,    app,  ota_1,   0x610000, 0x600000,
+otadata,  data, ota,     0xc10000, 0x2000,
+nvs_key,  data, nvs_keys,0xe50000, 0x1000,
+storage,  data, spiffs,  0xe51000, 0x100000,

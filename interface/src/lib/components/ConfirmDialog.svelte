@@ -1,18 +1,18 @@
 <script lang="ts">
-	import { modals } from 'svelte-modals';
+	import { modals, type ModalProps } from 'svelte-modals';
 	import { focusTrap } from 'svelte-focus-trap';
 	import { fly } from 'svelte/transition';
 	import Cancel from '~icons/tabler/x';
 	import Check from '~icons/tabler/check';
 
-	// provided by <Modals />
-
-	interface Props {
-		isOpen?: boolean;
+	interface Props extends ModalProps<void> {
 		title: string;
 		message: string;
-		onConfirm: any;
-		labels?: any;
+		onConfirm: (event: MouseEvent) => void;
+		labels?: {
+			cancel: { label: string; icon: typeof Cancel };
+			confirm: { label: string; icon: typeof Check };
+		};
 	}
 
 	let {
@@ -25,10 +25,19 @@
 			confirm: { label: 'OK', icon: Check }
 		}
 	}: Props = $props();
+
+	// Preserve simple formatting without allowing attributes or executable HTML.
+	const formattedMessage = $derived(
+		message
+			.replace(/&/g, '&amp;')
+			.replace(/</g, '&lt;')
+			.replace(/>/g, '&gt;')
+			.replace(/&lt;(\/?(?:b|strong|em|i|u)|br\s*\/?)&gt;/gi, '<$1>')
+	);
 </script>
 
 {#if isOpen}
-	{@const SvelteComponent = labels?.confirm.icon}
+	{@const SvelteComponent = labels.confirm.icon}
 	<div
 		role="dialog"
 		class="pointer-events-none fixed inset-0 z-50 flex items-center justify-center"
@@ -40,19 +49,19 @@
 		>
 			<h2 class="text-base-content text-start text-2xl font-bold">{title}</h2>
 			<div class="divider my-2"></div>
-			<p class="text-base-content mb-1 text-start">{@html message}</p>
+			<p class="text-base-content mb-1 text-start">{@html formattedMessage}</p>
 			<div class="divider my-2"></div>
 			<div class="flex justify-end gap-2">
 				<button
 					class="btn btn-primary inline-flex items-center"
 					onclick={() => {
 						modals.close();
-					}}><labels.cancel.icon class="h-5 w-5" /><span>{labels?.cancel.label}</span></button
+					}}><labels.cancel.icon class="h-5 w-5" /><span>{labels.cancel.label}</span></button
 				>
 				<button
 					class="btn btn-warning text-warning-content inline-flex items-center"
 					onclick={onConfirm}
-					><SvelteComponent class="h-5 w-5" /><span>{labels?.confirm.label}</span></button
+					><SvelteComponent class="h-5 w-5" /><span>{labels.confirm.label}</span></button
 				>
 			</div>
 		</div>

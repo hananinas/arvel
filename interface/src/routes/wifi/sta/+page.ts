@@ -2,6 +2,6 @@ import type { PageLoad } from './$types';
 
 export const load = (async () => {
 	return {
-		title: 'WiFi Station'
+		title: 'Wi-Fi setup'
 	};
 }) satisfies PageLoad;

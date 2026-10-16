@@ -18,6 +18,10 @@
 #include "driver/gpio.h"
 
 #include "user_app.h"
+#include "buddy_display_rotation.h"
+
+static_assert(EXAMPLE_LCD_H_RES == BUDDY_DISPLAY_HEIGHT &&
+              EXAMPLE_LCD_V_RES == BUDDY_DISPLAY_WIDTH, "Arvel panel geometry must stay 172x640");
 
 static const char *TAG = "example";
 static SemaphoreHandle_t lvgl_mux = NULL;
@@ -45,9 +49,12 @@ static const axs15231b_lcd_init_cmd_t lcd_init_cmds[] =
 
 static bool example_notify_lvgl_flush_ready(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_io_event_data_t *edata, void *user_ctx)
 {
-  BaseType_t TaskWoken;
+  BaseType_t TaskWoken = pdFALSE;
   xSemaphoreGiveFromISR(lvgl_flush_semap,&TaskWoken);
-  return false;
+  // IDF's SPI panel post-callback ignores our return value. Request the yield
+  // here instead of waiting for the next tick after every 16-row DMA strip.
+  if(TaskWoken == pdTRUE) portYIELD_FROM_ISR();
+  return TaskWoken == pdTRUE;
 }
 static void example_increase_lvgl_tick(void *arg)
 {
@@ -57,8 +64,10 @@ extern "C" void app_main(void)
 {
   lvgl_flush_semap = xSemaphoreCreateBinary();
   i2c_master_Init();
+  user_app_power_init();
   static lv_disp_draw_buf_t disp_buf; // contains internal graphic buffer(s) called draw buffer(s)
   static lv_disp_drv_t disp_drv;      // contains callback functions
+#if !CONFIG_UNRAVEL_BOARD_V2
   ESP_LOGI(TAG, "Initialize LCD RESET GPIO");
 
   gpio_config_t gpio_conf = {};
@@ -68,6 +77,7 @@ extern "C" void app_main(void)
   gpio_conf.pull_down_en = GPIO_PULLDOWN_DISABLE;
   gpio_conf.pull_up_en = GPIO_PULLUP_ENABLE;
   ESP_ERROR_CHECK_WITHOUT_ABORT(gpio_config(&gpio_conf));
+#endif
 
   ESP_LOGI(TAG, "Initialize QSPI bus");
   spi_bus_config_t buscfg = {};
@@ -88,7 +98,8 @@ extern "C" void app_main(void)
   io_config.dc_gpio_num = GPIO_NUM_NC;          
         io_config.spi_mode = 3;              
         io_config.pclk_hz = 40 * 1000 * 1000;
-        io_config.trans_queue_depth = 10;    
+        // The flush callback waits before reusing its single DMA strip.
+        io_config.trans_queue_depth = 1;
         io_config.on_color_trans_done = example_notify_lvgl_flush_ready; 
         //io_config.user_ctx = &disp_drv,         
         io_config.lcd_cmd_bits = 32;         
@@ -110,28 +121,31 @@ extern "C" void app_main(void)
     ESP_LOGI(TAG, "Install panel driver");
     ESP_ERROR_CHECK(esp_lcd_new_panel_axs15231b(panel_io, &panel_config, &panel));
     
-	ESP_ERROR_CHECK(gpio_set_level(EXAMPLE_PIN_NUM_LCD_RST,1));
+	ESP_ERROR_CHECK(user_app_lcd_reset_set_level(1));
     vTaskDelay(pdMS_TO_TICKS(30));
-    ESP_ERROR_CHECK(gpio_set_level(EXAMPLE_PIN_NUM_LCD_RST,0));
+    ESP_ERROR_CHECK(user_app_lcd_reset_set_level(0));
     vTaskDelay(pdMS_TO_TICKS(250));
-    ESP_ERROR_CHECK(gpio_set_level(EXAMPLE_PIN_NUM_LCD_RST,1));
+    ESP_ERROR_CHECK(user_app_lcd_reset_set_level(1));
     vTaskDelay(pdMS_TO_TICKS(30));
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel));
 
   	lv_init();
   	lvgl_dma_buf = (uint16_t *)heap_caps_malloc(LVGL_DMA_BUFF_LEN , MALLOC_CAP_DMA);
   	assert(lvgl_dma_buf);
-  	lv_color_t *buf1 = (lv_color_t *)heap_caps_malloc(LVGL_SPIRAM_BUFF_LEN , MALLOC_CAP_SPIRAM);
+  	// Keep the adjacent rotation reads from straddling PSRAM cache lines.
+  	lv_color_t *buf1 = (lv_color_t *)heap_caps_aligned_alloc(
+  		CONFIG_ESP32S3_DATA_CACHE_LINE_SIZE, LVGL_SPIRAM_BUFF_LEN, MALLOC_CAP_SPIRAM);
   	assert(buf1);
   	lv_disp_draw_buf_init(&disp_buf, buf1, NULL, EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES);
 
   	ESP_LOGI(TAG, "Register display driver to LVGL");
   	lv_disp_drv_init(&disp_drv);
-  	disp_drv.hor_res = EXAMPLE_LCD_H_RES;
-  	disp_drv.ver_res = EXAMPLE_LCD_V_RES;
+  	disp_drv.hor_res = EXAMPLE_LCD_V_RES;
+  	disp_drv.ver_res = EXAMPLE_LCD_H_RES;
   	disp_drv.flush_cb = example_lvgl_flush_cb;
   	disp_drv.draw_buf = &disp_buf;
-  	disp_drv.full_refresh = 1;          //full_refresh must be 1
+  	// Retain the full frame, but redraw only dirty objects/regions.
+  	disp_drv.direct_mode = 1;
   	disp_drv.user_data = panel;
   	lv_disp_drv_register(&disp_drv);
 	
@@ -151,7 +165,9 @@ extern "C" void app_main(void)
 
   	lvgl_mux = xSemaphoreCreateMutex();
   	assert(lvgl_mux);
-  	xTaskCreatePinnedToCore(example_lvgl_port_task, "LVGL", 4000, NULL, 4, NULL,0); //运行于内核_0
+  	// Keep the existing GUI task off the Wi-Fi driver's core. 6144 (was 4000):
+  	// the render path's worst observed headroom on 4000 was ~0.6 KB.
+  	xTaskCreatePinnedToCore(example_lvgl_port_task, "LVGL", 6144, NULL, 4, NULL, 1);
   	if (example_lvgl_lock(-1))
   	{
   	  	user_app_init();
@@ -159,30 +175,40 @@ extern "C" void app_main(void)
   	  	//lv_demo_music();
   	  	example_lvgl_unlock();
   	}
+  	ESP_LOGI(TAG, "Heap after app init: internal=%u largest=%u PSRAM=%u bytes",
+  	         (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+  	         (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+  	         (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
 }
+/* QSPI ignores RASET: nonzero y_start only continues the previous RAM write.
+ * Each refresh must restart at row zero (RAMWR), then send contiguous RAMWRC
+ * strips through the last dirty row. Direct mode still redraws only dirty
+ * regions into the single retained PSRAM frame; no rotation frame is added. */
+static int flush_last_row;
 static void example_lvgl_flush_cb(lv_disp_drv_t *drv, const lv_area_t *area, lv_color_t *color_map)
 {
-  esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t) drv->user_data;
-  const int flush_coun = (LVGL_SPIRAM_BUFF_LEN / LVGL_DMA_BUFF_LEN);
-  const int offgap = (EXAMPLE_LCD_V_RES / flush_coun);
-  const int dmalen = (LVGL_DMA_BUFF_LEN / 2);
-  int offsetx1 = 0;
-  int offsety1 = 0;
-  int offsetx2 = EXAMPLE_LCD_H_RES;
-  int offsety2 = offgap;
-
-  uint16_t *map = (uint16_t *)color_map;
-  xSemaphoreGive(lvgl_flush_semap);
-  for(int i = 0; i<flush_coun; i++)
-  {
-    xSemaphoreTake(lvgl_flush_semap,portMAX_DELAY);
-    memcpy(lvgl_dma_buf,map,LVGL_DMA_BUFF_LEN);
-    esp_lcd_panel_draw_bitmap(panel_handle, offsetx1, offsety1, offsetx2, offsety2, lvgl_dma_buf);
-    offsety1 += offgap;
-    offsety2 += offgap;
-    map += dmalen;
+  if (area->x2 + 1 > flush_last_row) flush_last_row = area->x2 + 1;
+  if(!lv_disp_flush_is_last(drv)) {
+    lv_disp_flush_ready(drv);
+    return;
   }
-  xSemaphoreTake(lvgl_flush_semap,portMAX_DELAY);
+  int last_row = flush_last_row;
+  flush_last_row = 0;
+  if (last_row <= 0 || last_row > EXAMPLE_LCD_V_RES) last_row = EXAMPLE_LCD_V_RES;
+  esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t) drv->user_data;
+  const int strip_rows = LVGL_DMA_BUFF_LEN / (EXAMPLE_LCD_H_RES * sizeof(uint16_t));
+  const uint16_t *map = (const uint16_t *)color_map;
+  xSemaphoreGive(lvgl_flush_semap);
+  for(int physical_y = 0; physical_y < last_row; physical_y += strip_rows)
+  {
+    const int rows = physical_y + strip_rows <= last_row ?
+                     strip_rows : last_row - physical_y;
+    xSemaphoreTake(lvgl_flush_semap, portMAX_DELAY);
+    buddy_display_rotate_strip(map, lvgl_dma_buf, physical_y, rows);
+    esp_lcd_panel_draw_bitmap(panel_handle, 0, physical_y, EXAMPLE_LCD_H_RES,
+                              physical_y + rows, lvgl_dma_buf);
+  }
+  xSemaphoreTake(lvgl_flush_semap, portMAX_DELAY);
   lv_disp_flush_ready(drv);
 }
 static bool example_lvgl_lock(int timeout_ms)
@@ -196,6 +222,7 @@ static void example_lvgl_unlock(void)
   assert(lvgl_mux && "bsp_display_start must be called first");
   xSemaphoreGive(lvgl_mux);
 }
+
 void example_lvgl_port_task(void *arg)
 {
   uint32_t task_delay_ms = EXAMPLE_LVGL_TASK_MAX_DELAY_MS;
@@ -220,11 +247,11 @@ void example_lvgl_port_task(void *arg)
 
 static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
 {
-  //static uint8_t read_touchpad_cmd[8] = {0xb5, 0xab, 0xa5, 0x5a, 0x0, 0x0, 0x0, 0x8};
+  (void)drv;
   uint8_t read_touchpad_cmd[11] = {0xb5, 0xab, 0xa5, 0x5a, 0x0, 0x0, 0x0, 0x0e,0x0, 0x0, 0x0};
   uint8_t buff[32] = {0};
   memset(buff,0,32);
-  ESP_ERROR_CHECK_WITHOUT_ABORT(i2c_master_write_read_dev(disp_touch_dev_handle,read_touchpad_cmd,11,buff,32));
+  ESP_ERROR_CHECK_WITHOUT_ABORT(i2c_master_touch_write_read(disp_touch_dev_handle,read_touchpad_cmd,11,buff,32));
   uint16_t pointX;
   uint16_t pointY;
   pointX = (((uint16_t)buff[2] & 0x0f) << 8) | (uint16_t)buff[3];
@@ -233,10 +260,11 @@ static void example_lvgl_touch_cb(lv_indev_drv_t *drv, lv_indev_data_t *data)
   if (buff[1]>0 && buff[1]<5)
   {
     data->state = LV_INDEV_STATE_PR;
-    if(pointX > EXAMPLE_LCD_V_RES) pointX = EXAMPLE_LCD_V_RES;
-    if(pointY > EXAMPLE_LCD_H_RES) pointY = EXAMPLE_LCD_H_RES;
-    data->point.x = pointY;
-    data->point.y = (EXAMPLE_LCD_V_RES-pointX);
+    uint16_t logicalX;
+    uint16_t logicalY;
+    buddy_display_touch_to_logical(pointX, pointY, &logicalX, &logicalY);
+    data->point.x = logicalX;
+    data->point.y = logicalY;
   }
   else 
   {

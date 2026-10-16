@@ -1,6 +1,9 @@
 #ifndef USER_AUDIO_BSP_H
 #define USER_AUDIO_BSP_H
 
+#include <stdbool.h>
+#include <stdint.h>
+
 
 
 
@@ -20,6 +23,10 @@ void audio_playback_read(void *data_ptr,uint32_t len);
 void audio_playback_read_chunked(void *data_ptr, uint32_t total_len, uint32_t chunk_size);
 
 void audio_playback_write(void *data_ptr,uint32_t len);
+
+// Checked 16 kHz, stereo, signed 16-bit output/capture; false on initialization or I/O errors.
+bool audio_playback_write_checked(const void *data_ptr, uint32_t len);
+bool audio_playback_read_chunked_checked(void *data_ptr, uint32_t total_len, uint32_t chunk_size);
 void audio_play_init(void);
 
 #ifdef __cplusplus

@@ -1,178 +1,41 @@
 <script lang="ts">
-	import type { LayoutData } from './$types';
-	import { onDestroy, onMount } from 'svelte';
-	import { user } from '$lib/stores/user';
-	import { telemetry } from '$lib/stores/telemetry';
-	import { analytics } from '$lib/stores/analytics';
-	import { batteryHistory } from '$lib/stores/battery';
-	import { socket } from '$lib/stores/socket';
-	import type { userProfile } from '$lib/stores/user';
 	import { page } from '$app/state';
-	import { Modals, modals } from 'svelte-modals';
+	import { Modals } from 'svelte-modals';
 	import Toast from '$lib/components/toasts/Toast.svelte';
-	import { notifications } from '$lib/components/toasts/notifications';
-	import { fade } from 'svelte/transition';
 	import '../app.css';
-	import Menu from './menu.svelte';
-	import Statusbar from './statusbar.svelte';
-	import Login from './login.svelte';
-	import type { Analytics } from '$lib/types/models';
-	import type { RSSI } from '$lib/types/models';
-	import type { Battery } from '$lib/types/models';
-	import type { DownloadOTA } from '$lib/types/models';
 
-	interface Props {
-		data: LayoutData;
-		children?: import('svelte').Snippet;
-	}
-
-	let { data, children }: Props = $props();
-
-	onMount(async () => {
-		if ($user.bearer_token !== '') {
-			await validateUser($user);
-		}
-		if (!(page.data.features.security && $user.bearer_token === '')) {
-			initSocket();
-		}
-	});
-
-	const initSocket = () => {
-		const ws_token = page.data.features.security ? '?access_token=' + $user.bearer_token : '';
-		const ws_protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
-		socket.init(
-			`${ws_protocol}://${window.location.host}/ws/events${ws_token}`,
-			page.data.features.event_use_json
-		);
-		addEventListeners();
-	};
-
-	onDestroy(() => {
-		removeEventListeners();
-	});
-
-	const addEventListeners = () => {
-		socket.on('open', handleOpen);
-		socket.on('close', handleClose);
-		socket.on('error', handleError);
-		socket.on('rssi', handleNetworkStatus);
-		socket.on('notification', handleNotification);
-		if (page.data.features.analytics) socket.on('analytics', handleAnalytics);
-		if (page.data.features.battery) socket.on('battery', handleBattery);
-		if (page.data.features.download_firmware) socket.on('otastatus', handleOAT);
-	};
-
-	const removeEventListeners = () => {
-		socket.off('analytics', handleAnalytics);
-		socket.off('open', handleOpen);
-		socket.off('close', handleClose);
-		socket.off('rssi', handleNetworkStatus);
-		socket.off('notification', handleNotification);
-		socket.off('battery', handleBattery);
-		socket.off('otastatus', handleOAT);
-	};
-
-	async function validateUser(userdata: userProfile) {
-		try {
-			const response = await fetch('/rest/verifyAuthorization', {
-				method: 'GET',
-				headers: {
-					Authorization: 'Bearer ' + userdata.bearer_token,
-					'Content-Type': 'application/json'
-				}
-			});
-			if (response.status !== 200) {
-				user.invalidate();
-			}
-		} catch (error) {
-			console.error('Error:', error);
-		}
-	}
-
-	const handleOpen = () => {
-		notifications.success('Connection to device established', 5000);
-	};
-
-	const handleClose = () => {
-		notifications.error('Connection to device lost', 5000);
-		telemetry.setRSSI({ rssi: 0, ssid: '' });
-	};
-
-	const handleError = (data: any) => console.error(data);
-
-	const handleNotification = (data: any) => {
-		switch (data.type) {
-			case 'info':
-				notifications.info(data.message, 5000);
-				break;
-			case 'warning':
-				notifications.warning(data.message, 5000);
-				break;
-			case 'error':
-				notifications.error(data.message, 5000);
-				break;
-			case 'success':
-				notifications.success(data.message, 5000);
-				break;
-			default:
-				break;
-		}
-	};
-
-	const handleAnalytics = (data: Analytics) => analytics.addData(data);
-
-	const handleNetworkStatus = (data: RSSI) => telemetry.setRSSI(data);
-
-	const handleBattery = (data: Battery) => {
-		telemetry.setBattery(data);
-		batteryHistory.addData(data);
-	};
-
-	const handleOAT = (data: DownloadOTA) => telemetry.setDownloadOTA(data);
-
-	let menuOpen = $state(false);
+	let { children }: { children?: import('svelte').Snippet } = $props();
+	const path = $derived(page.url.pathname);
 </script>
 
 <svelte:head>
-	<title>{page.data.title}</title>
+	<title>{path === '/' ? 'Arvel' : path.startsWith('/settings') ? 'Settings · Arvel' : path === '/login' ? 'Web login · Arvel' : 'Wi-Fi · Arvel'}</title>
+	<meta name="theme-color" content="#EEEFEB" />
+	<meta name="description" content="Arvel, the desk buddy on your ESP32 display. Real conversations and settings saved on your device." />
+	<link rel="preload" href="/fonts/inter-latin.woff2" as="font" type="font/woff2" crossorigin="anonymous" />
 </svelte:head>
 
-{#if page.data.features.security && $user.bearer_token === ''}
-	<Login signIn={initSocket} />
-{:else}
-	<div class="drawer lg:drawer-open">
-		<input id="main-menu" type="checkbox" class="drawer-toggle" bind:checked={menuOpen} />
-		<div class="drawer-content flex flex-col">
-			<!-- Status bar content here -->
-			<Statusbar />
-
-			<!-- Main page content here -->
-			{@render children?.()}
-		</div>
-		<!-- Side Navigation -->
-		<div class="drawer-side z-30 shadow-lg">
-			<label for="main-menu" class="drawer-overlay"></label>
-			<Menu
-				closeMenu={() => {
-					menuOpen = false;
-				}}
-			/>
-		</div>
-	</div>
-{/if}
+<div class="buddy-app">
+	<a class="skip-link" href="#main-content">Skip to content</a>
+	<header class="app-header">
+		<a class="brand" href="/" aria-label="Arvel home">
+			<span class="wordmark">arvel</span>
+			<span class="brand-chip">BUDDY · ESP32-S3 · 3.49″ 640×172</span>
+		</a>
+		<nav aria-label="Main navigation">
+			<a href="/" aria-current={path === '/' ? 'page' : undefined}>Home</a>
+			<a href="/settings" aria-current={path.startsWith('/settings') ? 'page' : undefined}>Settings</a>
+			<a href="/wifi/sta" aria-current={path.startsWith('/wifi') ? 'page' : undefined}>Wi-Fi</a>
+			<a href="/login" aria-current={path === '/login' ? 'page' : undefined}>Web login</a>
+		</nav>
+	</header>
+	<main id="main-content" tabindex="-1">{@render children?.()}</main>
+	<footer class="app-footer">Arvel is an AI assistant — answers can be mistaken, so check what matters.</footer>
+</div>
 
 <Modals>
-	<!-- svelte-ignore a11y_click_events_have_key_events -->
 	{#snippet backdrop({ close })}
-		<div
-			class="fixed inset-0 z-40 max-h-full max-w-full bg-black/20 backdrop-blur-sm"
-			transition:fade|global
-			onclick={() => close()}
-			role="button"
-			tabindex="0"
-			aria-label="Close modal"
-		></div>
+		<button class="modal-backdrop" onclick={() => close()} aria-label="Close dialog"></button>
 	{/snippet}
 </Modals>
-
 <Toast />

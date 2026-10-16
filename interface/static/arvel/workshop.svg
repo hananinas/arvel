@@ -1,0 +1,31 @@
+<svg width="640" height="172" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 172" preserveAspectRatio="xMidYMid slice">
+      <rect width="640" height="172" fill="#EEE4D6"></rect>
+      <rect x="468" y="12" width="152" height="108" rx="4" fill="#FBF8F2"></rect>
+      <rect x="476" y="20" width="136" height="92" fill="#CFE2E6"></rect>
+      <circle cx="590" cy="40" r="9" fill="#F4D27E"></circle>
+      <path d="M476 94 C 506 82 536 88 566 84 C 586 82 600 86 612 84 L612 112 L476 112Z" fill="#A9CBB6"></path>
+      <rect x="542" y="20" width="4" height="92" fill="#FBF8F2"></rect>
+      <rect x="476" y="64" width="136" height="4" fill="#FBF8F2"></rect>
+      <rect x="460" y="118" width="168" height="6" rx="2" fill="#D9CAB6"></rect>
+      <rect x="10" y="44" width="150" height="5" rx="2" fill="#B08560"></rect>
+      <rect x="20" y="22" width="10" height="22" rx="1" fill="#A65B48"></rect>
+      <rect x="32" y="18" width="8" height="26" rx="1" fill="#456B67"></rect>
+      <rect x="42" y="24" width="12" height="20" rx="1" fill="#E2B65C"></rect>
+      <rect x="56" y="20" width="8" height="24" rx="1" fill="#7D929B"></rect>
+      <rect x="66" y="28" width="16" height="16" rx="1" fill="#C9876B" transform="rotate(-12 74 36)"></rect>
+      <rect x="124" y="32" width="16" height="12" rx="2" fill="#C9876B"></rect>
+      <g fill="#6E9C7E">
+        <ellipse cx="126" cy="26" rx="6" ry="3" transform="rotate(-35 126 26)"></ellipse>
+        <ellipse cx="138" cy="24" rx="6" ry="3" transform="rotate(30 138 24)"></ellipse>
+        <ellipse cx="132" cy="20" rx="3" ry="7"></ellipse>
+      </g>
+      <g opacity="0.5" fill="#D8C9B4">
+        <rect x="300" y="26" width="34" height="34" rx="2"></rect>
+        <rect x="340" y="40" width="30" height="26" rx="2"></rect>
+      </g>
+      <rect y="148" width="640" height="6" fill="#A57650"></rect>
+      <rect y="153" width="640" height="19" fill="#B98A64"></rect>
+      <path d="M600 148 L600 120 M600 120 L614 108" stroke="#3B423C" stroke-width="3" stroke-linecap="round" fill="none"></path>
+      <path d="M606 100 L626 112 L618 118 Z" fill="#3B423C"></path>
+      <rect x="590" y="146" width="22" height="4" rx="2" fill="#3B423C"></rect>
+    </svg>

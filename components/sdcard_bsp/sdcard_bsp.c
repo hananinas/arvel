@@ -25,33 +25,43 @@ sdcard_bsp_t user_sdcard_bsp;
 
 sdmmc_card_t *card_host = NULL;
 
-void _sdcard_init(void)
+esp_err_t sdcard_mount_checked(void)
 {
-  sdcard_even_ = xEventGroupCreate();
-  esp_vfs_fat_sdmmc_mount_config_t mount_config = 
-  {
-    .format_if_mount_failed = false,       //如果挂靠失败，创建分区表并格式化SD卡
-    .max_files = 5,                        //打开文件最大数
-    .allocation_unit_size = 16 * 1024 *3,  //类似扇区大小
+  static volatile int mounting = 0;
+  if (__sync_lock_test_and_set(&mounting, 1)) return ESP_ERR_INVALID_STATE;
+  if (card_host != NULL) {
+    esp_err_t result = sdmmc_get_status(card_host);
+    __sync_lock_release(&mounting);
+    return result;
+  }
+  esp_vfs_fat_sdmmc_mount_config_t mount_config = {
+    .format_if_mount_failed = false,
+    .max_files = 8,
+    .allocation_unit_size = 16 * 1024,
   };
-
   sdmmc_host_t host = SDMMC_HOST_DEFAULT();
-  host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;//高速
-
+  host.max_freq_khz = SDMMC_FREQ_HIGHSPEED;
   sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
-  slot_config.width = 1;           //1线
+  slot_config.width = 1;
   slot_config.clk = SDMMC_CLK_PIN;
   slot_config.cmd = SDMMC_CMD_PIN;
   slot_config.d0 = SDMMC_D0_PIN;
-
-  ESP_ERROR_CHECK_WITHOUT_ABORT(esp_vfs_fat_sdmmc_mount(SDlist, &host, &slot_config, &mount_config, &card_host));
-
-  if(card_host != NULL)
-  {
-    sdmmc_card_print_info(stdout, card_host); //把卡的信息打印出来
-    user_sdcard_bsp.sdcard_size = (float)(card_host->csd.capacity)/2048/1024; //G
-    xEventGroupSetBits(sdcard_even_,0x01);
+  esp_err_t result = esp_vfs_fat_sdmmc_mount(SDlist, &host, &slot_config, &mount_config, &card_host);
+  if (result == ESP_OK && card_host != NULL) {
+    user_sdcard_bsp.sdcard_size = (float)(card_host->csd.capacity)/2048/1024;
+  } else if (result == ESP_OK) {
+    result = ESP_FAIL;
   }
+  __sync_lock_release(&mounting);
+  return result;
+}
+
+void _sdcard_init(void)
+{
+  if (sdcard_even_ == NULL) sdcard_even_ = xEventGroupCreate();
+  esp_err_t result = sdcard_mount_checked();
+  if (result == ESP_OK && sdcard_even_ != NULL) xEventGroupSetBits(sdcard_even_, 0x01);
+  else ESP_LOGW(TAG, "SD mount unavailable: %s", esp_err_to_name(result));
 }
 
 

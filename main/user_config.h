@@ -1,6 +1,8 @@
 #ifndef USER_CONFIG_H
 #define USER_CONFIG_H
 
+#include "sdkconfig.h"
+
 //spi & i2c handle
 #define LCD_HOST SPI3_HOST
 
@@ -19,12 +21,28 @@
 #define EXAMPLE_PIN_NUM_LCD_DATA1  (GPIO_NUM_12)
 #define EXAMPLE_PIN_NUM_LCD_DATA2  (GPIO_NUM_13)
 #define EXAMPLE_PIN_NUM_LCD_DATA3  (GPIO_NUM_14)
+#if CONFIG_UNRAVEL_BOARD_V2
+// Waveshare V2: LCD reset is on TCA9554 output 5, not an ESP32 GPIO.
+#define EXAMPLE_PIN_NUM_LCD_RST    (-1)
+#define EXAMPLE_PIN_NUM_LCD_TE     (GPIO_NUM_21)
+#define EXAMPLE_PIN_NUM_BK_LIGHT   (GPIO_NUM_42)
+#define EXAMPLE_PIN_NUM_EXIO_INT   (GPIO_NUM_8)
+#define EXAMPLE_EXIO_PIN_LCD_RST   (1ULL << 5)
+#define EXAMPLE_EXIO_PIN_BL_EN     (1ULL << 1)
+#else
 #define EXAMPLE_PIN_NUM_LCD_RST    (GPIO_NUM_21)
-#define EXAMPLE_PIN_NUM_BK_LIGHT   (GPIO_NUM_8) 
+#define EXAMPLE_PIN_NUM_LCD_TE     (-1)
+#define EXAMPLE_PIN_NUM_BK_LIGHT   (GPIO_NUM_8)
+#define EXAMPLE_PIN_NUM_EXIO_INT   (GPIO_NUM_42)
+#endif
+
+#define EXAMPLE_EXIO_PIN_SYS_EN    (1ULL << 6)
+#define EXAMPLE_EXIO_PIN_NS_MODE   (1ULL << 7)
 
 #define EXAMPLE_LCD_H_RES 172   
 #define EXAMPLE_LCD_V_RES 640 
-#define LVGL_DMA_BUFF_LEN (EXAMPLE_LCD_H_RES * 64 * 2)
+// One internal DMA strip; the full logical frame stays in PSRAM.
+#define LVGL_DMA_BUFF_LEN (EXAMPLE_LCD_H_RES * 16 * 2)
 #define LVGL_SPIRAM_BUFF_LEN (EXAMPLE_LCD_H_RES * EXAMPLE_LCD_V_RES * 2)
 
 

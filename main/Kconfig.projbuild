@@ -1,0 +1,63 @@
+menu "Unravel Agent"
+
+    choice UNRAVEL_BOARD_REVISION
+        prompt "Waveshare ESP32-S3-Touch-LCD-3.49 hardware revision"
+        default UNRAVEL_BOARD_V1
+        help
+            Select the PCB revision, not the enclosure type. Case A does not
+            identify the hardware revision. V2 boards have a Rev1.1 PCB marking
+            or a V2 case QC label. Reset and backlight wiring differs by revision.
+
+        config UNRAVEL_BOARD_V1
+            bool "V1 (original hardware)"
+
+        config UNRAVEL_BOARD_V2
+            bool "V2 (Rev1.1 PCB)"
+    endchoice
+
+    config UNRAVEL_OLLAMA_API_KEY
+        string "Ollama Cloud API key"
+        default ""
+        help
+            Create a key at https://ollama.com/settings/keys.
+            Stored in sdkconfig and embedded in firmware. Do not publish either.
+
+    config UNRAVEL_OLLAMA_MODEL
+        string "Ollama Cloud model identifier"
+        default "glm-5.3"
+        help
+            Use a name from https://ollama.com/api/tags, without the CLI's
+            :cloud suffix. Requests go directly to https://ollama.com/v1.
+
+    config UNRAVEL_STT_URL
+        string "Speech-to-text HTTPS transcription endpoint"
+        default "https://api.openai.com/v1/audio/transcriptions"
+        help
+            OpenAI-compatible multipart audio transcription API returning JSON
+            with a text field. A compatible self-hosted HTTPS endpoint also works.
+
+    config UNRAVEL_STT_API_KEY
+        string "Speech-to-text API key (separate from Ollama)"
+        default ""
+        help
+            Bearer token for the transcription service, not the Ollama key.
+            Stored in sdkconfig and embedded in firmware. Do not publish either.
+
+    config UNRAVEL_STT_MODEL
+        string "Speech-to-text model identifier"
+        default "gpt-4o-mini-transcribe"
+        help
+            Must be supported by the configured transcription service.
+
+    config UNRAVEL_TTS_CODEX
+        bool "Use direct Codex subscription voice"
+        default n
+        help
+            Use on-device Codex live voice after signing in through authenticated
+            browser Settings. Local eSpeak remains the default; no LAN bridge.
+
+    config UNRAVEL_TTS_VOICE
+        string "Codex speech voice"
+        default "sol"
+
+endmenu

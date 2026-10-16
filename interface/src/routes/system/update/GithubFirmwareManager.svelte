@@ -1,8 +1,6 @@
 <script lang="ts">
-	import { user } from '$lib/stores/user';
 	import { page } from '$app/state';
 	import { modals } from 'svelte-modals';
-	import type { ModalComponent } from 'svelte-modals';
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
@@ -44,7 +42,6 @@
 			const apiResponse = await fetch('/rest/downloadUpdate', {
 				method: 'POST',
 				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
 					'Content-Type': 'application/json'
 				},
 				body: JSON.stringify({ download_url: url })
@@ -67,7 +64,7 @@
 			}
 		}
 		if (url === '') {
-			modals.open(InfoDialog as unknown as ModalComponent<any>, {
+			modals.open(InfoDialog, {
 				title: 'No matching firmware found',
 				message:
 					'No matching firmware was found for the current device. Upload the firmware manually or build from sources.',
@@ -76,7 +73,7 @@
 			});
 			return;
 		}
-		modals.open(ConfirmDialog as unknown as ModalComponent<any>, {
+		modals.open(ConfirmDialog, {
 			title: 'Confirm flashing new firmware to the device',
 			message: 'Are you sure you want to overwrite the existing firmware with a new one?',
 			labels: {
@@ -85,7 +82,7 @@
 			},
 			onConfirm: () => {
 				postGithubDownload(url);
-				modals.open(GithubUpdateDialog as unknown as ModalComponent<any>, {
+				modals.open(GithubUpdateDialog, {
 					onConfirm: () => modals.closeAll()
 				});
 			}

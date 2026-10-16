@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <string.h>
+#include <limits.h>
+#include <stdbool.h>
 #include "freertos/FreeRTOS.h"
 #include "user_audio_bsp.h"
 #include "esp_log.h"
@@ -16,6 +18,8 @@
 
 esp_codec_dev_handle_t playback = NULL;
 esp_codec_dev_handle_t record = NULL;
+static bool playback_open_ok = false;
+static bool record_open_ok = false;
 
 
 extern const uint8_t music_pcm_start[] asm("_binary_canon_pcm_start");
@@ -134,14 +138,26 @@ void example_i2s_audio_Test(void *arg)
 
 void audio_play_init(void)
 {
-	esp_codec_dev_set_out_vol(playback, 100.0); //设置100声音大小
-  esp_codec_dev_set_in_gain(record, 35.0);   //设置录音时的增益
+  playback_open_ok = false;
+  record_open_ok = false;
+  if (!playback || !record) {
+    ESP_LOGE("audio", "Initialize codec handles before opening audio");
+    return;
+  }
+  int out_vol = esp_codec_dev_set_out_vol(playback, 100.0);
+  int in_gain = esp_codec_dev_set_in_gain(record, 35.0);
   esp_codec_dev_sample_info_t fs = {};
-    fs.sample_rate = 16000;
-    fs.channel = 2;
-    fs.bits_per_sample = 16;
-  esp_codec_dev_open(playback, &fs); //打开播放
-  esp_codec_dev_open(record, &fs);   //打开录音
+  fs.sample_rate = 16000;
+  fs.channel = 2;
+  fs.bits_per_sample = 16;
+  int out_status = esp_codec_dev_open(playback, &fs);
+  int in_status = esp_codec_dev_open(record, &fs);
+  playback_open_ok = out_status == ESP_CODEC_DEV_OK && out_vol == ESP_CODEC_DEV_OK;
+  record_open_ok = in_status == ESP_CODEC_DEV_OK && in_gain == ESP_CODEC_DEV_OK;
+  if (!playback_open_ok || !record_open_ok) {
+    ESP_LOGE("audio", "Audio initialization failed: output=%d volume=%d input=%d gain=%d",
+             out_status, out_vol, in_status, in_gain);
+  }
 }
 
 void audio_playback_read(void *data_ptr,uint32_t len)
@@ -179,6 +195,41 @@ void audio_playback_read_chunked(void *data_ptr, uint32_t total_len, uint32_t ch
 void audio_playback_write(void *data_ptr,uint32_t len)
 {
 	esp_codec_dev_write(playback, data_ptr, len);
+}
+
+bool audio_playback_write_checked(const void *data_ptr, uint32_t len)
+{
+  if (!playback || !playback_open_ok || !data_ptr || len == 0 ||
+      (len % 4) != 0 || len > INT_MAX) {
+    return false;
+  }
+  int status = esp_codec_dev_write(playback, (void *)data_ptr, (int)len);
+  if (status != ESP_CODEC_DEV_OK) {
+    ESP_LOGE("audio", "Codec playback failed: %d", status);
+    return false;
+  }
+  return true;
+}
+
+bool audio_playback_read_chunked_checked(void *data_ptr, uint32_t total_len, uint32_t chunk_size)
+{
+  if (!record || !record_open_ok || !data_ptr || total_len == 0 ||
+      chunk_size == 0 || (total_len % 4) != 0 || (chunk_size % 4) != 0 ||
+      chunk_size > INT_MAX) {
+    return false;
+  }
+  uint8_t *ptr = (uint8_t *)data_ptr;
+  for (uint32_t offset = 0; offset < total_len;) {
+    uint32_t len = total_len - offset;
+    if (len > chunk_size) len = chunk_size;
+    int status = esp_codec_dev_read(record, ptr + offset, (int)len);
+    if (status != ESP_CODEC_DEV_OK) {
+      ESP_LOGE("audio", "Codec capture failed at %u bytes: %d", (unsigned)offset, status);
+      return false;
+    }
+    offset += len;
+  }
+  return true;
 }
 
 

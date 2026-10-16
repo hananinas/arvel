@@ -1,17 +1,16 @@
 <script lang="ts">
-	import { modals } from 'svelte-modals';
+	import { type ModalProps } from 'svelte-modals';
 	import { focusTrap } from 'svelte-focus-trap';
 	import { fly } from 'svelte/transition';
 	import Check from '~icons/tabler/check';
 
 	// provided by <Modals />
 
-	interface Props {
-		isOpen: boolean;
+	interface Props extends ModalProps<void> {
 		title: string;
 		message: string;
-		onDismiss: any;
-		dismiss?: any;
+		onDismiss: (event: MouseEvent) => void;
+		dismiss?: { label: string; icon: typeof Check };
 	}
 
 	const {

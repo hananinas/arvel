@@ -5,6 +5,55 @@
 
 static const char color_cmd = LV_TXT_COLOR_CMD[0];
 
+#if LV_TXT_LINE_BREAK_LONG_LEN == 0
+static uint32_t wrapping_glyph_calls;
+
+static bool counted_glyph_dsc(const lv_font_t * font, lv_font_glyph_dsc_t * dsc,
+                              uint32_t letter, uint32_t next)
+{
+    LV_UNUSED(font);
+    wrapping_glyph_calls++;
+    return (LV_FONT_DEFAULT)->get_glyph_dsc(LV_FONT_DEFAULT, dsc, letter, next);
+}
+
+void test_txt_long_word_wrapping_has_linear_glyph_work(void)
+{
+    char word[8193];
+    memset(word, 'x', sizeof(word) - 1);
+    word[sizeof(word) - 1] = '\0';
+    lv_font_t font = *LV_FONT_DEFAULT;
+    font.get_glyph_dsc = counted_glyph_dsc;
+    lv_coord_t glyph_width = lv_font_get_glyph_width(LV_FONT_DEFAULT, 'x', 'x');
+    wrapping_glyph_calls = 0;
+    uint32_t offset = 0;
+    while(offset < sizeof(word) - 1) {
+        lv_coord_t width = 0;
+        uint32_t bytes = _lv_txt_get_next_line(word + offset, &font, 0, 8 * glyph_width + 1,
+                                             &width, LV_TEXT_FLAG_NONE);
+        TEST_ASSERT_EQUAL_UINT32(8, bytes);
+        TEST_ASSERT_EQUAL_INT(8 * glyph_width, width);
+        offset += bytes;
+    }
+    TEST_ASSERT_EQUAL_UINT32(sizeof(word) - 1, offset);
+    TEST_ASSERT_LESS_OR_EQUAL_UINT32(2 * (sizeof(word) - 1), wrapping_glyph_calls);
+}
+
+void test_txt_forced_wrap_preserves_utf8_and_word_boundaries(void)
+{
+    lv_coord_t width = 0;
+    lv_coord_t glyph_width = lv_font_get_glyph_width(LV_FONT_DEFAULT, 0xe9, 0xe9);
+    uint32_t bytes = _lv_txt_get_next_line("éééé", LV_FONT_DEFAULT, 0, 2 * glyph_width + 1,
+                                         &width, LV_TEXT_FLAG_NONE);
+    TEST_ASSERT_EQUAL_UINT32(4, bytes);
+    TEST_ASSERT_EQUAL_INT(2 * glyph_width, width);
+
+    glyph_width = lv_font_get_glyph_width(LV_FONT_DEFAULT, 'x', 'x');
+    bytes = _lv_txt_get_next_line("xx xxxxx", LV_FONT_DEFAULT, 0, 3 * glyph_width,
+                                 &width, LV_TEXT_FLAG_NONE);
+    TEST_ASSERT_EQUAL_UINT32(3, bytes);
+}
+#endif
+
 void test_txt_should_identify_valid_start_of_command(void)
 {
     uint32_t character = color_cmd;

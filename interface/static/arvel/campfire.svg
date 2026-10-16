@@ -1,0 +1,24 @@
+<svg width="640" height="172" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 172" preserveAspectRatio="xMidYMid slice">
+      <rect width="640" height="172" fill="#1A1F2B"></rect>
+      <g fill="#E8E2D2">
+        <circle cx="80" cy="20" r="1"></circle><circle cx="220" cy="14" r="1.2"></circle><circle cx="360" cy="28" r="1"></circle>
+        <circle cx="470" cy="12" r="1.2"></circle><circle cx="620" cy="22" r="1"></circle>
+      </g>
+      <g fill="#10141C">
+        <path d="M200 120 L222 50 L244 120Z"></path><path d="M260 120 L278 66 L296 120Z"></path>
+        <path d="M430 120 L452 44 L474 120Z"></path><path d="M600 120 L620 60 L640 120Z"></path>
+      </g>
+      <circle cx="550" cy="138" r="56" fill="#F29A4A" opacity="0.12"><animate attributeName="opacity" values="0.1;0.18;0.1" dur="1.4s" repeatCount="indefinite"></animate></circle>
+      <rect y="120" width="640" height="52" fill="#2A2420"></rect>
+      <path d="M528 152 L572 140 M528 140 L572 152" stroke="#5A4033" stroke-width="7" stroke-linecap="round"></path>
+      <path d="M534 144 C 532 128 544 122 550 106 C 556 122 568 128 566 144Z" fill="#F29A4A">
+        <animate attributeName="d" values="M534 144 C 532 128 544 122 550 106 C 556 122 568 128 566 144Z;M534 144 C 534 126 546 120 552 102 C 556 120 568 126 566 144Z;M534 144 C 532 128 544 122 550 106 C 556 122 568 128 566 144Z" dur="0.9s" repeatCount="indefinite"></animate>
+      </path>
+      <path d="M541 144 C 540 134 548 128 550 118 C 554 128 560 134 559 144Z" fill="#F6D27A"></path>
+      <g fill="#F6B25A">
+        <circle cx="548" cy="96" r="1.4"><animate attributeName="cy" values="100;60" dur="1.8s" repeatCount="indefinite"></animate><animate attributeName="opacity" values="1;0" dur="1.8s" repeatCount="indefinite"></animate></circle>
+        <circle cx="556" cy="92" r="1.2"><animate attributeName="cy" values="104;56" dur="2.3s" begin="0.6s" repeatCount="indefinite"></animate><animate attributeName="opacity" values="1;0" dur="2.3s" begin="0.6s" repeatCount="indefinite"></animate></circle>
+      </g>
+      <path d="M-10 158 C 60 150 120 154 196 148" stroke="#4A3428" stroke-width="12" fill="none" stroke-linecap="round"></path>
+      <path d="M-10 154 C 60 146 120 150 196 144" stroke="#6B4E3D" stroke-width="3" fill="none" stroke-linecap="round" opacity="0.6"></path>
+    </svg>

@@ -1,11 +1,10 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount } from 'svelte';
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import SettingsCard from '$lib/components/SettingsCard.svelte';
 	import Collapsible from '$lib/components/Collapsible.svelte';
 	import Spinner from '$lib/components/Spinner.svelte';
-	import { user } from '$lib/stores/user';
 	import { page } from '$app/state';
 	import { notifications } from '$lib/components/toasts/notifications';
 	import { TIME_ZONES } from './timezones';
@@ -16,23 +15,25 @@
 	import Stopwatch from '~icons/tabler/24-hours';
 	import type { NTPSettings, NTPStatus } from '$lib/types/models';
 
-	let ntpSettings: NTPSettings = $state();
-	let ntpStatus: NTPStatus = $state();
+	let ntpSettings: NTPSettings | undefined = $state();
+	let ntpStatus: NTPStatus | undefined = $state();
+	let settingsLoading = $state(true);
+	let statusLoading = $state(true);
 
 	async function getNTPStatus() {
 		try {
 			const response = await fetch('/rest/ntpStatus', {
 				method: 'GET',
 				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
 					'Content-Type': 'application/json'
 				}
 			});
-			ntpStatus = await response.json();
+			ntpStatus = response.ok ? (await response.json()) ?? undefined : undefined;
 		} catch (error) {
+			ntpStatus = undefined;
 			console.error('Error:', error);
 		}
-		return;
+		statusLoading = false;
 	}
 
 	async function getNTPSettings() {
@@ -40,30 +41,25 @@
 			const response = await fetch('/rest/ntpSettings', {
 				method: 'GET',
 				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
 					'Content-Type': 'application/json'
 				}
 			});
-			ntpSettings = await response.json();
+			ntpSettings = response.ok ? (await response.json()) ?? undefined : undefined;
 		} catch (error) {
+			ntpSettings = undefined;
 			console.error('Error:', error);
 		}
-		return;
+		settingsLoading = false;
 	}
 
-	const interval = setInterval(async () => {
-		getNTPStatus();
-	}, 5000);
-
-	onDestroy(() => clearInterval(interval));
-
 	onMount(() => {
-		if (!page.data.features.security || $user.admin) {
-			getNTPSettings();
+		void getNTPStatus();
+		const interval = setInterval(() => void getNTPStatus(), 5000);
+		if (!page.data.features.security) {
+			void getNTPSettings();
 		}
+		return () => clearInterval(interval);
 	});
-
-	let formField: any = $state();
 
 	let formErrors = $state({
 		server: false
@@ -74,7 +70,6 @@
 			const response = await fetch('/rest/ntpSettings', {
 				method: 'POST',
 				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
 					'Content-Type': 'application/json'
 				},
 				body: JSON.stringify(data)
@@ -91,7 +86,9 @@
 		}
 	}
 
-	function handleSubmitNTP() {
+	function handleSubmitNTP(event: SubmitEvent) {
+		event.preventDefault();
+		if (!ntpSettings) return;
 		let valid = true;
 
 		// Validate Server
@@ -113,7 +110,6 @@
 		// Submit JSON to REST API
 		if (valid) {
 			postNTPSettings(ntpSettings);
-			//alert('Form Valid');
 		}
 	}
 
@@ -144,12 +140,6 @@
 		return result;
 	}
 
-	function preventDefault(fn) {
-		return function (event) {
-			event.preventDefault();
-			fn.call(this, event);
-		};
-	}
 </script>
 
 <SettingsCard collapsible={false}>
@@ -160,9 +150,9 @@
 		<span>Network Time</span>
 	{/snippet}
 	<div class="w-full">
-		{#await getNTPStatus()}
+		{#if statusLoading}
 			<Spinner />
-		{:then nothing}
+		{:else if ntpStatus}
 			<div
 				class="flex w-full flex-col space-y-1"
 				transition:slide|local={{ duration: 300, easing: cubicOut }}
@@ -242,19 +232,23 @@
 					</div>
 				</div>
 			</div>
-		{/await}
+		{:else}
+			<p role="status">Network time status unavailable.</p>
+		{/if}
 	</div>
 
-	{#if !page.data.features.security || $user.admin}
-		<Collapsible open={false} class="shadow-lg" icon={null} opened={() => {}} closed={() => {}}>
+	{#if !page.data.features.security}
+		<Collapsible open={false} class="shadow-lg">
 			{#snippet title()}
 				<span>Change NTP Settings</span>
 			{/snippet}
+			{#if settingsLoading}
+				<Spinner />
+			{:else if ntpSettings}
 			<form
 				class="fieldset"
-				onsubmit={preventDefault(handleSubmitNTP)}
+				onsubmit={handleSubmitNTP}
 				novalidate
-				bind:this={formField}
 			>
 				<label class="label text-base inline-flex cursor-pointer content-end justify-start gap-4">
 					<input
@@ -291,6 +285,9 @@
 					<button class="btn btn-primary" type="submit">Apply Settings</button>
 				</div>
 			</form>
+			{:else}
+				<p role="status">Network time settings unavailable.</p>
+			{/if}
 		</Collapsible>
 	{/if}
 </SettingsCard>

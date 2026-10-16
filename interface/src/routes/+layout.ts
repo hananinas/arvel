@@ -5,13 +5,20 @@ export const prerender = false;
 export const ssr = false;
 
 export const load = (async ({ fetch }) => {
-	const result = await fetch('/rest/features');
-	const item = await result.json();
-	return {
-		features: item,
-		title: 'ESP32-SvelteKit',
-		github: 'theelims/ESP32-sveltekit',
-		copyright: '2025 theelims',
-		appName: 'ESP32 SvelteKit'
-	};
+	const controller = new AbortController();
+	const timeout = setTimeout(() => controller.abort(), 5000);
+	try {
+		const result = await fetch('/rest/features', { signal: controller.signal, cache: 'no-store' });
+		if (!result.ok) throw new Error('Device information is unavailable. Check your connection and reload.');
+		const item = await result.json();
+		return {
+			features: item,
+			title: 'Unravel Buddy',
+			github: '',
+			copyright: 'Unravel Buddy',
+			appName: 'Unravel Buddy'
+		};
+	} finally {
+		clearTimeout(timeout);
+	}
 }) satisfies LayoutLoad;

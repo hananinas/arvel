@@ -216,6 +216,13 @@ static uint32_t lv_txt_get_next_word(const char * txt, const lv_font_t * font,
             break_index = i;
             break_letter_count = word_len - 1;
             /*break_index is now pointing at the character that doesn't fit*/
+            /*Without long-word balancing, the fitting/rejected prefix
+             *determines this line. Rescanning the remainder is quadratic.*/
+            if(LV_TXT_LINE_BREAK_LONG_LEN == 0) {
+                if(force) return break_index;
+                if(word_w_ptr != NULL) *word_w_ptr = 0;
+                return 0;
+            }
         }
 
         /*Check for new line chars and breakchars*/

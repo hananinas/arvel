@@ -1,0 +1,34 @@
+<svg width="640" height="172" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 172" preserveAspectRatio="xMidYMid slice">
+      <rect width="640" height="172" fill="#DCE5EC"></rect>
+      <rect y="90" width="640" height="82" fill="#E6ECF1"></rect>
+      <circle cx="560" cy="36" r="13" fill="#F6F2E6"></circle>
+      <path d="M0 132 C 110 116 220 122 330 130 C 440 138 530 116 640 122 L640 172 L0 172Z" fill="#F4F7FA"></path>
+      <g fill="#5D7C74">
+        <path d="M500 74 L520 122 L480 122Z"></path>
+        <path d="M534 88 L550 126 L518 126Z"></path>
+        <path d="M600 70 L622 124 L578 124Z"></path>
+      </g>
+      <g fill="#FFFFFF">
+        <path d="M500 74 L507 91 L493 91Z"></path>
+        <path d="M534 88 L539 100 L529 100Z"></path>
+        <path d="M600 70 L608 89 L592 89Z"></path>
+      </g>
+      <g fill="#5A4636">
+        <rect x="498" y="122" width="4" height="8"></rect>
+        <rect x="532" y="126" width="4" height="6"></rect>
+        <rect x="598" y="124" width="4" height="8"></rect>
+      </g>
+      <path d="M0 156 C 160 148 320 152 480 158 C 560 161 600 156 640 157 L640 172 L0 172Z" fill="#FFFFFF"></path>
+      <path d="M-10 158 C 50 150 110 154 196 145" stroke="#6B4E3D" stroke-width="9" fill="none" stroke-linecap="round"></path>
+      <path d="M-6 153 C 50 145 110 149 188 140" stroke="#FFFFFF" stroke-width="4" fill="none" stroke-linecap="round"></path>
+      <g fill="#FFFFFF">
+        <animateTransform attributeName="transform" type="translate" values="0 -50;8 0" dur="5s" repeatCount="indefinite"></animateTransform>
+        <circle cx="30" cy="20" r="2"></circle><circle cx="90" cy="60" r="1.6"></circle><circle cx="150" cy="30" r="2.2"></circle>
+        <circle cx="210" cy="80" r="1.6"></circle><circle cx="270" cy="40" r="2"></circle><circle cx="330" cy="10" r="1.6"></circle>
+        <circle cx="390" cy="70" r="2.2"></circle><circle cx="450" cy="30" r="1.6"></circle><circle cx="510" cy="56" r="2"></circle>
+        <circle cx="570" cy="16" r="2.2"></circle><circle cx="630" cy="66" r="1.6"></circle><circle cx="60" cy="110" r="2"></circle>
+        <circle cx="180" cy="130" r="1.6"></circle><circle cx="300" cy="104" r="2"></circle><circle cx="420" cy="120" r="1.6"></circle>
+        <circle cx="540" cy="100" r="2"></circle><circle cx="610" cy="140" r="1.6"></circle><circle cx="120" cy="160" r="2"></circle>
+        <circle cx="360" cy="166" r="1.6"></circle><circle cx="480" cy="170" r="2"></circle>
+      </g>
+    </svg>

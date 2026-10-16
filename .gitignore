@@ -1,1 +1,34 @@
 build/
+components/agent_runtime/rust/target/
+.env
+sdkconfig.local
+sdkconfig.local.old
+.cache
+
+# Frontend dependencies and generated caches, at any depth
+node_modules/
+.svelte-kit/
+.vite/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Local environment variants; keep templates
+.env.*
+!.env.example
+
+# ESP-IDF configuration backups
+sdkconfig.old
+
+# OS/editor leftovers
+.DS_Store
+*~
+*.swp
+*.swo
+
+# Local planning documents
+/docs/arvel-hackathon-plan.md
+/docs/agent-runtime-device-control-plan.md

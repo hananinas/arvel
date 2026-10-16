@@ -19,6 +19,9 @@ extern "C" {
 
 
 void _sdcard_init(void);
+// Checked, non-formatting mount. Caller must run on a worker, not while holding LVGL.
+// ESP_ERR_INVALID_STATE means another task is mounting; existing mount is status-checked.
+esp_err_t sdcard_mount_checked(void);
 esp_err_t sdcard_file_write(const char *path, const char *data);
 esp_err_t sdcard_file_read(const char *path, char *buffer, size_t *out_len);
 

@@ -1,19 +1,17 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-
-	if (page.status == 404) {
-		goto('/');
-	}
 </script>
 
-<div class="min-w-screen flex h-screen">
-	<div class="mx-auto flex w-8/12 max-w-lg flex-col justify-center self-center p-2 align-middle">
-		<div class="flex flex-wrap items-end justify-start">
-			<div class="text-secondary pr-2 text-7xl font-bold">{page.status}</div>
-			<div class="text-base-content text-5xl font-semibold">{page.error?.message}</div>
-		</div>
-		<div class="divider"></div>
-		<p class="text-xl">Oops! Something has gone wrong.</p>
-	</div>
-</div>
+<section class="device-error" aria-labelledby="error-heading">
+	<p class="eyebrow">Unravel Buddy · Device interface</p>
+	<h1 id="error-heading">{page.status === 404 ? 'That page is not here.' : 'We could not open the device interface.'}</h1>
+	<p>{page.status === 404 ? 'Use Conversation to return to your Buddy, or open Wi-Fi setup to reconnect the device.' : 'Check that this phone or computer is on the device’s network, then reload. Chat and Wi-Fi settings are read from the real device; there is no offline simulation.'}</p>
+	<div class="error-actions"><a class="buddy-button" href="/">Open conversation</a><a class="buddy-button secondary" href="/wifi/sta">Wi-Fi setup</a><button class="buddy-button secondary" onclick={() => window.location.reload()}>Reload page</button></div>
+</section>
+
+<style>
+	.device-error { max-width: 720px; margin: 0 auto; padding: 48px 24px; }
+	h1 { font-size: 32px; line-height: 1.2; font-weight: 650; margin: 16px 0 24px; }
+	.device-error > p { line-height: 1.6; }
+	.error-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 32px; }
+</style>

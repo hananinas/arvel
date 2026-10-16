@@ -1,7 +1,5 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { page } from '$app/state';
-	import { user } from '$lib/stores/user';
 	import SettingsCard from '$lib/components/SettingsCard.svelte';
 	import CoreDump from '~icons/tabler/bug';
 	import Info from '~icons/tabler/info-circle';
@@ -14,7 +12,6 @@
 			const response = await fetch('/rest/coreDump', {
 				method: 'GET',
 				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
 					'Content-Type': 'application/octet-stream' // Expect binary data
 				}
 			});

@@ -1,0 +1,24 @@
+Unravel ESP32 Rust integration
+
+The AgentLoop, Session, model, tools, events, cancellation, and error
+implementations in vendor/unravel-agent-runtime/src originate from
+https://github.com/unravelaidk/unravel-agent-runtime at revision
+c507d6b2b2514527a572b0d2331aef34961ba652 (crates/unravel-agent-runtime/src).
+They are locally modified, not an unchanged upstream copy.
+
+Local ESP32 integration changes (2026-10-14) include:
+- A standalone dependency manifest avoiding desktop Tokio features.
+- Actual provider call IDs and conversation/provider-session/run/generation
+  identity in the tool execution context, with deadline and cancellation.
+- Explicit succeeded/failed/unknown/cancelled/partial tool result states and
+  propagation of uncertain outcomes into the existing orchestration lifecycle.
+- A synchronous checkpoint hook before requests and between public turn
+  iterations, used by the embedded bridge for archive acknowledgment and
+  bounded complete-tool-group context compaction.
+
+The upstream authors' attribution, source revision, AGPL-3.0-only license,
+and the earlier ServoLoop/Khadim provenance remain in the vendored NOTICE.
+
+The C ABI and callback-backed OpenAI adapter in this directory are integration
+code, distributed under AGPL-3.0-only. See vendor/unravel-agent-runtime/LICENSE
+and vendor/unravel-agent-runtime/NOTICE for license text and upstream attribution.

@@ -1,578 +1,161 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
-	import { socket } from '$lib/stores/socket';
-	import { modals } from 'svelte-modals';
-	import { slide } from 'svelte/transition';
-	import { cubicOut } from 'svelte/easing';
-	import { user } from '$lib/stores/user';
-	import { page } from '$app/state';
-	import { notifications } from '$lib/components/toasts/notifications';
-	import DraggableList from '$lib/components/DraggableList.svelte';
-	import SettingsCard from '$lib/components/SettingsCard.svelte';
-	import Collapsible from '$lib/components/Collapsible.svelte';
-	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
-	import InfoDialog from '$lib/components/InfoDialog.svelte';
-	import type { KnownNetworkItem, WifiSettings, WifiStatus } from '$lib/types/models';
-	import ScanNetworks from './Scan.svelte';
-	import EditNetwork from './EditNetwork.svelte';
-	import Spinner from '$lib/components/Spinner.svelte';
-	import AP from '~icons/tabler/access-point';
-	import Router from '~icons/tabler/router';
-	import Settings from '~icons/tabler/settings';
-	import MAC from '~icons/tabler/dna-2';
-	import Home from '~icons/tabler/home';
-	import WiFi from '~icons/tabler/wifi';
-	import SSID from '~icons/tabler/router';
-	import Down from '~icons/tabler/chevron-down';
-	import DNS from '~icons/tabler/address-book';
-	import Gateway from '~icons/tabler/torii';
-	import Subnet from '~icons/tabler/grid-dots';
-	import Channel from '~icons/tabler/antenna';
-	import Scan from '~icons/tabler/radar-2';
-	import Add from '~icons/tabler/circle-plus';
-	import Edit from '~icons/tabler/pencil';
-	import Delete from '~icons/tabler/trash';
-	import Grip from '~icons/tabler/grip-vertical';
-	import Cancel from '~icons/tabler/x';
-	import Check from '~icons/tabler/check';
-	import Save from '~icons/tabler/device-floppy';
-	import Info from '~icons/tabler/info-circle';
+	import { onMount } from 'svelte';
+	import { deviceRequest } from '$lib/agent';
 
-	type WifiReconnectEvent = {
-		delay_ms: number;
-	};
+	interface WifiStatus { status: number; ssid?: string; local_ip?: string; rssi?: number; }
+	interface WifiSettings { wifi_networks: { ssid: string; password: string }[]; }
+	interface Network { ssid: string; rssi: number; encryption: number; }
+	let status = $state<WifiStatus | null>(null);
+	let ssid = $state('');
+	let password = $state('');
+	let networks = $state<Network[]>([]);
+	let loading = $state(true);
+	let saving = $state(false);
+	let scanning = $state(false);
+	let error = $state('');
+	let notice = $state('');
+	let scanComplete = $state(false);
+	let mounted = false;
+	let timer: ReturnType<typeof setTimeout>;
+	const requests = new Set<AbortController>();
+	const textEncoder = new TextEncoder();
+	let ssidBytes = $derived(textEncoder.encode(ssid).length);
+	let passwordBytes = $derived(textEncoder.encode(password).length);
 
-	let wifiStatus: WifiStatus = $state({
-		status: 0,
-		ssid: '',
-		local_ip: '',
-		ip_address: '',
-		mac_address: '',
-		rssi: 0,
-		bssid: '',
-		channel: 0,
-		gateway_ip: '',
-		subnet_mask: '',
-		dns_ip_1: '',
-		dns_ip_2: '',
-		connected: false
-	});
-
-	let wifiSettings: WifiSettings = $state({
-		hostname: '',
-		connection_mode: 1,
-		wifi_networks: [] as KnownNetworkItem[]
-	});
-
-	// Stringify to recognize changes
-	// svelte-ignore state_referenced_locally
-	let strWifiSettings: string = $state(JSON.stringify(wifiSettings));
-	// Recognize changes in settings
-	let isSettingsDirty: boolean = $derived(JSON.stringify(wifiSettings) !== strWifiSettings);
-
-	let showWifiDetails = $state(false);
-
-	let formErrorhostname = $state(false);
-
-	let connectionMode = [
-		{
-			id: 0,
-			text: `Offline`
-		},
-		{
-			id: 1,
-			text: `Signal Strength`
-		},
-		{
-			id: 2,
-			text: `Priority (Sequence)`
-		}
-	];
-
-	async function getWifiStatus() {
+	async function refreshStatus() {
+		const controller = new AbortController();
+		requests.add(controller);
 		try {
-			const response = await fetch('/rest/wifiStatus', {
-				method: 'GET',
-				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
-					'Content-Type': 'application/json'
-				}
-			});
-			wifiStatus = await response.json();
-		} catch (error) {
-			console.error('Error:', error);
+			const data = await deviceRequest<WifiStatus>('/rest/wifiStatus', { signal: controller.signal }, 5000);
+			if (mounted) status = data;
+		} catch {
+			if (mounted) status = null;
+		} finally {
+			requests.delete(controller);
+			if (mounted) timer = setTimeout(refreshStatus, 5000);
 		}
 	}
 
-	async function getWifiSettings() {
+	async function loadSettings() {
+		const controller = new AbortController();
+		requests.add(controller);
 		try {
-			const response = await fetch('/rest/wifiSettings', {
-				method: 'GET',
-				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
-					'Content-Type': 'application/json'
-				}
-			});
-			wifiSettings = await response.json();
-			strWifiSettings = JSON.stringify(wifiSettings); // Store the recently loaded settings in a string variable
-		} catch (error) {
-			console.error('Error:', error);
+			const data = await deviceRequest<WifiSettings>('/rest/wifiSettings', { signal: controller.signal });
+			if (mounted) ssid = data.wifi_networks[0]?.ssid || '';
+		} catch (failure) {
+			if (mounted) error = failure instanceof Error ? failure.message : 'Wi-Fi settings could not be loaded. Reconnect and reload this page.';
+		} finally {
+			requests.delete(controller);
+			if (mounted) loading = false;
 		}
 	}
 
-	async function postWiFiSettings() {
+	async function save(event: SubmitEvent) {
+		event.preventDefault();
+		if (saving || loading || ssidBytes < 1 || ssidBytes > 32 || passwordBytes > 63 || (passwordBytes > 0 && passwordBytes < 8)) return;
+		saving = true;
+		error = '';
+		notice = '';
+		const controller = new AbortController();
+		requests.add(controller);
 		try {
-			const response = await fetch('/rest/wifiSettings', {
-				method: 'POST',
-				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
-					'Content-Type': 'application/json'
-				},
-				body: JSON.stringify(wifiSettings)
+			await deviceRequest<WifiSettings>('/rest/wifiSettings', {
+				method: 'POST', signal: controller.signal,
+				body: JSON.stringify({ wifi_networks: [{ ssid, password, static_ip_config: false }] })
 			});
-			if (response.status == 200) {
-				notifications.success('Wi-Fi settings updated.', 3000);
-				wifiSettings = await response.json();
-				strWifiSettings = JSON.stringify(wifiSettings); // Store the recently loaded settings in a string variable
-			} else {
-				notifications.error('Failed to update Wi-Fi settings.', 5000);
+			if (!mounted) return;
+			password = '';
+			notice = 'Wi-Fi configuration saved. The device is reconnecting. If its address changes, open the new device address to return to chat.';
+		} catch (failure) {
+			if (mounted) error = failure instanceof Error ? failure.message : 'Wi-Fi setup failed. Your entered settings have been kept.';
+		} finally {
+			requests.delete(controller);
+			if (mounted) saving = false;
+		}
+	}
+
+	async function scan() {
+		if (scanning) return;
+		scanning = true;
+		error = '';
+		scanComplete = false;
+		const controller = new AbortController();
+		requests.add(controller);
+		try {
+			const data = await deviceRequest<{ networks: Network[] }>('/rest/wifiScan', { signal: controller.signal }, 20000);
+			if (mounted) {
+				networks = data.networks.filter((network) => network.ssid.length > 0);
+				scanComplete = true;
 			}
-		} catch (error) {
-			console.error('Error:', error);
+		} catch (failure) {
+			if (mounted) error = failure instanceof Error ? failure.message : 'Network scan failed. You can enter a network name manually.';
+		} finally {
+			requests.delete(controller);
+			if (mounted) scanning = false;
 		}
 	}
-
-	const interval = setInterval(async () => {
-		getWifiStatus();
-	}, 5000);
 
 	onMount(() => {
-		socket.on<WifiReconnectEvent>('reconnect', (data) => {
-			notifications.warning(
-				`Reconnecting shortly as new WiFi settings will be applied in ${Math.round(data.delay_ms / 1000)} seconds.`,
-				5000
-			);
-		});
+		mounted = true;
+		void loadSettings();
+		void refreshStatus();
+		return () => {
+			mounted = false;
+			clearTimeout(timer);
+			for (const controller of requests) controller.abort();
+			requests.clear();
+		};
 	});
-
-	onDestroy(() => {
-		clearInterval(interval);
-		socket.off('reconnect');
-	});
-
-	function checkHostname() {
-		if (wifiSettings.hostname.length < 3 || wifiSettings.hostname.length > 32) {
-			formErrorhostname = true;
-		} else {
-			formErrorhostname = false;
-		}
-
-		return !formErrorhostname;
-	}
-
-	function applyWifiSettings() {
-		if (checkHostname()) {
-			postWiFiSettings();
-		}
-	}
-
-	function scanForNetworks() {
-		modals.open(ScanNetworks, {
-			storeNetwork: (ssid: string) => {
-				console.log('Storing network:', ssid);
-				modals.close();
-				handleNewNetwork(ssid);
-			}
-		});
-	}
-
-	function handleNewNetwork(ssid?: string) {
-		modals.open(EditNetwork, {
-			title: 'Add network',
-			networkEditable: {
-				ssid: ssid || '',
-				password: '',
-				static_ip_config: false,
-				local_ip: undefined,
-				subnet_mask: undefined,
-				gateway_ip: undefined,
-				dns_ip_1: undefined,
-				dns_ip_2: undefined
-			},
-			onSaveNetwork: async (newNetwork: KnownNetworkItem) => {
-				wifiSettings.wifi_networks = [...wifiSettings.wifi_networks, newNetwork];
-				modals.close();
-			}
-		});
-	}
-
-	function handleEdit(index: number) {
-		modals.open(EditNetwork, {
-			title: 'Edit network',
-			networkEditable: $state.snapshot(wifiSettings.wifi_networks[index]), // Deep copy
-			onSaveNetwork: async (editedNetwork: KnownNetworkItem) => {
-				wifiSettings.wifi_networks[index] = editedNetwork;
-				modals.close();
-			}
-		});
-	}
-
-	function confirmDelete(index: number) {
-		modals.open(ConfirmDialog, {
-			title: 'Delete Network?',
-			message: `Are you sure you want to delete network \'${wifiSettings.wifi_networks[index].ssid}\'?`,
-			labels: {
-				cancel: { label: 'Cancel', icon: Cancel },
-				confirm: { label: 'Delete', icon: Delete }
-			},
-			onConfirm: () => {
-				wifiSettings.wifi_networks.splice(index, 1);
-				modals.close();
-			}
-		});
-	}
-
-	function isNetworkListTooLong() {
-		if (wifiSettings.wifi_networks.length >= 5) {
-			modals.open(InfoDialog, {
-				title: 'Reached Maximum Networks',
-				message:
-					'You have reached the maximum number of networks. Please delete one to add another.',
-				dismiss: { label: 'OK', icon: Check },
-				onDismiss: () => {
-					modals.close();
-				}
-			});
-			return true;
-		} else {
-			return false;
-		}
-	}
-
-	function handleNetworkReorder(reorderedNetworks: KnownNetworkItem[]) {
-		wifiSettings.wifi_networks = reorderedNetworks;
-	}
-
-	async function getWifiData() {
-		await getWifiStatus();
-		await getWifiSettings();
-	}
 </script>
 
-<SettingsCard collapsible={false}>
-	{#snippet icon()}
-		<Router class="lex-shrink-0 mr-2 h-6 w-6 self-end" />
-	{/snippet}
-	{#snippet title()}
-		<span>WiFi Connection</span>
-	{/snippet}
-	{#await getWifiData()}
-		<Spinner />
-	{:then nothing}
-		<div class="w-full overflow-x-auto">
-			<div
-				class="flex w-full flex-col space-y-1"
-				transition:slide|local={{ duration: 300, easing: cubicOut }}
-			>
-				<div class="rounded-box bg-base-100 flex items-center space-x-3 px-4 py-2">
-					<div
-						class="mask mask-hexagon h-auto w-10 {wifiStatus.status === 3
-							? 'bg-success'
-							: 'bg-error'}"
-					>
-						<AP
-							class="h-auto w-full scale-75 {wifiStatus.status === 3
-								? 'text-success-content'
-								: 'text-error-content'}"
-						/>
-					</div>
-					<div>
-						<div class="font-bold">Status</div>
-						<div class="text-sm opacity-75">
-							{wifiStatus.status === 3 ? 'Connected' : 'Inactive'}
-						</div>
-					</div>
-				</div>
-				{#if wifiStatus.status === 3}
-					<div class="rounded-box bg-base-100 flex items-center space-x-3 px-4 py-2">
-						<div class="mask mask-hexagon bg-primary h-auto w-10">
-							<SSID class="text-primary-content h-auto w-full scale-75" />
-						</div>
-						<div>
-							<div class="font-bold">SSID</div>
-							<div class="text-sm opacity-75">
-								{wifiStatus.ssid}
-							</div>
-						</div>
-					</div>
+<section class="wifi-setup" aria-labelledby="wifi-heading">
+	<a class="back-link" href="/">← Back to conversation</a>
+	<p class="eyebrow">Keep your Buddy connected</p>
+	<h1 id="wifi-heading">Wi-Fi setup</h1>
+	<p class="setup-copy">Connect the device to a 2.4 GHz network so Buddy can reach its cloud model. This device saves one network and uses automatic IP configuration.</p>
+	<div class="connection-summary" role="status" aria-live="polite"><strong>{status ? (status.status === 3 ? 'Device Wi-Fi connected' : 'Device Wi-Fi offline') : (loading ? 'Reading device status…' : 'Device status unavailable')}</strong>{#if status?.status === 3}<span>{status.ssid} · {status.local_ip || 'IP address pending'} · {status.rssi} dBm</span>{/if}</div>
+	{#if error}<div class="notice error" role="alert">{error}</div>{/if}
+	{#if notice}<div class="notice" role="status">{notice}</div>{/if}
+	<form onsubmit={save}>
+		<label for="wifi-ssid">Network name (SSID)</label>
+		<input id="wifi-ssid" bind:value={ssid} required disabled={loading || saving} aria-describedby="ssid-help" autocomplete="off" />
+		<p id="ssid-help" class="muted">1–32 UTF-8 bytes. {ssidBytes > 32 ? 'This network name is too long.' : 'You can type it or select a scanned network below.'}</p>
+		<label for="wifi-password">Network password</label>
+		<input id="wifi-password" type="password" bind:value={password} disabled={loading || saving} aria-describedby="password-help" autocomplete="new-password" />
+		<p id="password-help" class="muted">8–63 UTF-8 bytes for a secured network. Leave blank to keep the saved password for the same network, or to join a new open network. Passwords are never returned to this page.</p>
+		<div class="wifi-actions"><button type="submit" class="buddy-button" disabled={loading || saving || scanning || ssidBytes < 1 || ssidBytes > 32 || passwordBytes > 63 || (passwordBytes > 0 && passwordBytes < 8)}>{saving ? 'Saving…' : 'Save and connect'}</button><button type="button" class="buddy-button secondary" onclick={scan} disabled={scanning || saving || loading}>{scanning ? 'Scanning…' : 'Scan nearby networks'}</button></div>
+	</form>
+	<section class="scan-results" aria-label="Nearby Wi-Fi networks" aria-busy={scanning}>
+		<p role="status" aria-live="polite">{scanning ? 'Scanning nearby 2.4 GHz networks. You can enter a network name manually.' : scanComplete && !networks.length ? 'No nearby networks found. Enter your network name manually or scan again.' : ''}</p>
+		{#if networks.length}<ul>{#each networks as network, index (`${network.ssid}-${index}`)}<li><button class="network-choice" disabled={saving || loading} onclick={() => { ssid = network.ssid; }}><strong>{network.ssid}</strong><span>{network.encryption === 0 ? 'Open network' : 'Password required'} · {network.rssi} dBm</span><span class="select-label">Select</span></button></li>{/each}</ul>{/if}
+	</section>
+</section>
 
-					<div class="rounded-box bg-base-100 flex items-center space-x-3 px-4 py-2">
-						<div class="mask mask-hexagon bg-primary h-auto w-10">
-							<Home class="text-primary-content h-auto w-full scale-75" />
-						</div>
-						<div>
-							<div class="font-bold">IP Address</div>
-							<div class="text-sm opacity-75">
-								{wifiStatus.local_ip}
-							</div>
-						</div>
-					</div>
-
-					<div class="rounded-box bg-base-100 flex items-center space-x-3 px-4 py-2">
-						<div class="mask mask-hexagon bg-primary h-auto w-10">
-							<WiFi class="text-primary-content h-auto w-full scale-75" />
-						</div>
-						<div>
-							<div class="font-bold">RSSI</div>
-							<div class="text-sm opacity-75">
-								{wifiStatus.rssi} dBm
-							</div>
-						</div>
-						<div class="grow"></div>
-						<button
-							class="btn btn-circle btn-ghost btn-sm modal-button"
-							onclick={() => {
-								showWifiDetails = !showWifiDetails;
-							}}
-						>
-							<Down
-								class="text-base-content h-auto w-6 transition-transform duration-300 ease-in-out {showWifiDetails
-									? 'rotate-180'
-									: ''}"
-							/>
-						</button>
-					</div>
-				{/if}
-			</div>
-
-			<!-- Folds open -->
-			{#if showWifiDetails}
-				<div
-					class="flex w-full flex-col space-y-1 pt-1"
-					transition:slide|local={{ duration: 300, easing: cubicOut }}
-				>
-					<div class="rounded-box bg-base-100 flex items-center space-x-3 px-4 py-2">
-						<div class="mask mask-hexagon bg-primary h-auto w-10">
-							<MAC class="text-primary-content h-auto w-full scale-75" />
-						</div>
-						<div>
-							<div class="font-bold">MAC Address</div>
-							<div class="text-sm opacity-75">
-								{wifiStatus.mac_address}
-							</div>
-						</div>
-					</div>
-
-					<div class="rounded-box bg-base-100 flex items-center space-x-3 px-4 py-2">
-						<div class="mask mask-hexagon bg-primary h-auto w-10">
-							<Channel class="text-primary-content h-auto w-full scale-75" />
-						</div>
-						<div>
-							<div class="font-bold">Channel</div>
-							<div class="text-sm opacity-75">
-								{wifiStatus.channel}
-							</div>
-						</div>
-					</div>
-
-					<div class="rounded-box bg-base-100 flex items-center space-x-3 px-4 py-2">
-						<div class="mask mask-hexagon bg-primary h-auto w-10">
-							<Gateway class="text-primary-content h-auto w-full scale-75" />
-						</div>
-						<div>
-							<div class="font-bold">Gateway IP</div>
-							<div class="text-sm opacity-75">
-								{wifiStatus.gateway_ip}
-							</div>
-						</div>
-					</div>
-
-					<div class="rounded-box bg-base-100 flex items-center space-x-3 px-4 py-2">
-						<div class="mask mask-hexagon bg-primary h-auto w-10">
-							<Subnet class="text-primary-content h-auto w-full scale-75" />
-						</div>
-						<div>
-							<div class="font-bold">Subnet Mask</div>
-							<div class="text-sm opacity-75">
-								{wifiStatus.subnet_mask}
-							</div>
-						</div>
-					</div>
-
-					<div class="rounded-box bg-base-100 flex items-center space-x-3 px-4 py-2">
-						<div class="mask mask-hexagon bg-primary h-auto w-10">
-							<DNS class="text-primary-content h-auto w-full scale-75" />
-						</div>
-						<div>
-							<div class="font-bold">DNS</div>
-							<div class="text-sm opacity-75">
-								{wifiStatus.dns_ip_1}
-							</div>
-						</div>
-					</div>
-				</div>
-			{/if}
-		</div>
-
-		{#if !page.data.features.security || $user.admin}
-			<Collapsible open={true} class="shadow-lg" isDirty={isSettingsDirty}>
-				{#snippet icon()}
-					<Settings class="lex-shrink-0 mr-2 h-6 w-6 self-end" />
-				{/snippet}
-				{#snippet title()}
-					<span>Settings & Networks</span>
-				{/snippet}
-				<div class="fieldset">
-					<div class="grid w-full grid-cols-1 content-center gap-4 sm:grid-cols-2">
-						<div>
-							<label class="label" for="hostname">Host Name (mDNS)</label>
-							<input
-								type="text"
-								min="3"
-								max="32"
-								class="input input-bordered invalid:border-error w-full invalid:border-2 {formErrorhostname
-									? 'border-error border-2'
-									: ''}"
-								bind:value={wifiSettings.hostname}
-								id="hostname"
-								required
-							/>
-							{#if formErrorhostname}
-								<div transition:slide|local={{ duration: 300, easing: cubicOut }}>
-									<label for="hostname" class="label">
-										<span class="text-error">
-											Host name must be between 3 and 32 characters long.
-										</span>
-									</label>
-								</div>
-							{/if}
-						</div>
-
-						<div>
-							<label class="label" for="apmode">WiFi Connection Mode</label>
-							<select class="select w-full" id="apmode" bind:value={wifiSettings.connection_mode}>
-								{#each connectionMode as mode}
-									<option value={mode.id}>
-										{mode.text}
-									</option>
-								{/each}
-							</select>
-						</div>
-					</div>
-				</div>
-
-				<div class="divider mt-2 mb-0"></div>
-
-				<div class="flex justify-end w-full gap-x-2">
-					<button
-						class="btn btn-primary text-primary-content btn-md"
-						onclick={() => {
-							handleNewNetwork();
-						}}
-					>
-						<Add class="h-6 w-6" />
-					</button>
-					<button
-						class="btn btn-primary text-primary-content btn-md"
-						onclick={() => {
-							if (!isNetworkListTooLong()) {
-								scanForNetworks();
-							}
-						}}
-					>
-						<Scan class="h-6 w-6" />
-					</button>
-				</div>
-
-				<div transition:slide|local={{ duration: 300, easing: cubicOut }}>
-					{#if wifiSettings.wifi_networks.length === 0}
-						<div class="text-center text-base-content/50 mt-2">
-							No WiFi networks configured yet.<br />
-							Scan for available networks or add one manually.
-						</div>
-					{:else}
-						<DraggableList
-							items={wifiSettings.wifi_networks}
-							onReorder={handleNetworkReorder}
-							class="space-y-2"
-						>
-							{#snippet children({ item: network, index }: { item: any; index: number })}
-								<!-- svelte-ignore a11y_click_events_have_key_events -->
-								<div
-									class="rounded-box bg-base-100 grid grid-cols-[auto_auto_minmax(6rem,1fr)_auto] items-center gap-3 p-2"
-								>
-									<Grip class="h-6 w-6 text-base-content/30 cursor-grab" />
-									<div class="mask mask-hexagon bg-primary h-auto w-10">
-										<Router class="text-primary-content h-auto w-full scale-75" />
-									</div>
-									<div class="flex items-center gap-2 overflow-hidden">
-										<div class="font-bold truncate">{network.ssid}</div>
-										{#if network.static_ip_config}
-											<div
-												class="badge badge-sm badge-secondary opacity-75 flex-shrink-0 hidden sm:block"
-											>
-												Static
-											</div>
-										{:else}
-											<div
-												class="badge badge-sm badge-outline badge-secondary opacity-75 flex-shrink-0 hidden sm:block"
-											>
-												DHCP
-											</div>
-										{/if}
-									</div>
-									<div class="flex">
-										<button
-											class="btn btn-ghost btn-sm"
-											onclick={() => {
-												const actualIndex = wifiSettings.wifi_networks.findIndex(
-													(n) => n.ssid === network.ssid
-												);
-												handleEdit(actualIndex);
-											}}
-										>
-											<Edit class="h-6 w-6" /></button
-										>
-										<button
-											class="btn btn-ghost btn-sm"
-											onclick={() => {
-												const actualIndex = wifiSettings.wifi_networks.findIndex(
-													(n) => n.ssid === network.ssid
-												);
-												confirmDelete(actualIndex);
-											}}
-										>
-											<Delete class="text-error h-6 w-6" />
-										</button>
-									</div>
-								</div>
-							{/snippet}
-						</DraggableList>
-					{/if}
-				</div>
-				{#if wifiSettings.connection_mode === 2 && wifiSettings.wifi_networks.length > 1}
-					<div class="w-full" transition:slide|local={{ duration: 300, easing: cubicOut }}>
-						<div role="alert" class="alert bg-base-300 mt-2">
-							<Info class="h-6 w-6" />
-							<div>Arrange the networks according to their priority (most important first).</div>
-						</div>
-					</div>
-				{/if}
-
-				<div class="divider mt-2 mb-0"></div>
-
-				<div class="flex flex-wrap justify-end mb-4">
-					<button
-						class="btn btn-primary"
-						type="button"
-						disabled={!isSettingsDirty}
-						onclick={applyWifiSettings}
-					>
-						<Save class="mr-2 h-5 w-5" />
-						<span>Apply Settings</span>
-					</button>
-				</div>
-			</Collapsible>
-		{/if}
-	{/await}
-</SettingsCard>
+<style>
+	.wifi-setup { max-width: 760px; margin: 0 auto; padding: 28px 24px; }
+	.back-link { display: inline-flex; align-items: center; min-height: 44px; margin-bottom: 12px; color: var(--accent); font-size: 13px; font-weight: 600; text-decoration: underline; text-underline-offset: 4px; border-radius: 4px; }
+	.back-link:hover { color: var(--accent-strong); }
+	h1 { font-size: 21px; line-height: 1.2; font-weight: 650; margin: 6px 0 8px; letter-spacing: -0.4px; }
+	.setup-copy { max-width: 62ch; font-size: 14px; line-height: 1.4; color: var(--sub); }
+	.connection-summary { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; margin-top: 16px; border-radius: 16px; background: var(--paper); box-shadow: var(--shadow-panel); overflow-wrap: anywhere; font-size: 14px; }
+	.connection-summary span { color: var(--sub); font-size: 13px; }
+	.notice { margin-top: 16px; }
+	form { margin-top: 16px; padding: 16px; border-radius: 16px; background: var(--paper); box-shadow: var(--shadow-panel); }
+	form > label { display: block; font-size: 13px; font-weight: 550; margin-bottom: 6px; }
+	form > label:not(:first-child) { margin-top: 16px; }
+	input { display: block; width: 100%; min-height: 40px; border: 1px solid var(--rule-strong); border-radius: 10px; background: #fff; color: var(--ink); padding: 8px 12px; font-size: 14px; }
+	input:hover:not(:disabled) { border-color: var(--accent); }
+	input:disabled { background: var(--rule); color: var(--sub); cursor: not-allowed; }
+	.muted { margin-top: 6px; }
+	.wifi-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+	.scan-results { margin-top: 20px; font-size: 14px; line-height: 1.5; }
+	.scan-results ul { list-style: none; padding: 0; margin: 12px 0 0; }
+	.scan-results li + li { margin-top: 8px; }
+	.network-choice { display: grid; grid-template-columns: 1fr auto; gap: 2px 16px; text-align: left; width: 100%; min-height: 56px; border: none; border-radius: 12px; padding: 10px 14px; background: var(--paper); color: var(--ink); cursor: pointer; box-shadow: var(--shadow-button); }
+	.network-choice strong { overflow-wrap: anywhere; font-weight: 600; }
+	.network-choice > span { color: var(--sub); font-size: 12px; }
+	.network-choice > .select-label { grid-column: 2; grid-row: 1 / 3; align-self: center; color: var(--accent); font-weight: 650; }
+	.network-choice:hover:not(:disabled) { background: var(--accent-soft); }
+	.network-choice:disabled { opacity: 0.5; cursor: not-allowed; }
+	@media (max-width: 520px) { .wifi-setup { padding: 20px 16px; } .wifi-actions { flex-direction: column; } }
+</style>

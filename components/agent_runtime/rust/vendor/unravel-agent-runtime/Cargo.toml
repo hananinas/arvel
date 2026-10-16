@@ -1,0 +1,24 @@
+[package]
+name = "unravel-agent-runtime"
+version = "0.2.0"
+edition = "2021"
+license = "AGPL-3.0-only"
+repository = "https://github.com/unravelaidk/unravel-agent-runtime"
+rust-version = "1.88"
+description = "Embedded Unravel core with durable tool context, bounded checkpoints and a standalone dependency manifest"
+
+[package.metadata.upstream]
+revision = "c507d6b2b2514527a572b0d2331aef34961ba652"
+source = "crates/unravel-agent-runtime/src"
+
+[dependencies]
+async-trait = "0.1"
+futures-util = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", default-features = false, features = ["rt", "time", "sync", "macros"] }
+
+[dev-dependencies]
+tokio = { version = "1", default-features = false, features = ["rt", "time", "sync", "macros", "test-util"] }
+parking_lot = "0.12"

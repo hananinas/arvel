@@ -6,8 +6,8 @@ function createWebSocket() {
 	const { subscribe, set } = writable(false);
 	const socketEvents = ['open', 'close', 'error', 'message', 'unresponsive'] as const;
 	type SocketEvent = (typeof socketEvents)[number];
-	let unresponsiveTimeoutId: number;
-	let reconnectTimeoutId: number;
+	let unresponsiveTimeoutId: ReturnType<typeof setTimeout> | undefined;
+	let reconnectTimeoutId: ReturnType<typeof setTimeout> | undefined;
 	let ws: WebSocket;
 	let socketUrl: string | URL;
 	let event_use_json = false;
@@ -15,12 +15,25 @@ function createWebSocket() {
 	function init(url: string | URL, use_json: boolean = false) {
 		socketUrl = url;
 		event_use_json = use_json;
+		clearTimeout(unresponsiveTimeoutId);
+		clearTimeout(reconnectTimeoutId);
+		closeSocket();
+		set(false);
 		connect();
+	}
+
+	function closeSocket() {
+		if (!ws) return;
+		ws.onopen = null;
+		ws.onmessage = null;
+		ws.onerror = null;
+		ws.onclose = null;
+		ws.close();
 	}
 
 	function disconnect(reason: SocketEvent, event?: Event) {
 		//console.log('disconnect', reason, event);
-		ws.close();
+		closeSocket();
 		set(false);
 		clearTimeout(unresponsiveTimeoutId);
 		clearTimeout(reconnectTimeoutId);
@@ -65,13 +78,12 @@ function createWebSocket() {
 		let eventListeners = listeners.get(event);
 		if (!eventListeners) return;
 
-		if (!eventListeners.size) {
-			sendEvent('unsubscribe', event);
-		}
-		if (listener) {
-			eventListeners?.delete(listener);
-		} else {
+		if (listener) eventListeners.delete(listener);
+		if (!listener || !eventListeners.size) {
 			listeners.delete(event);
+			if (!socketEvents.some((socketEvent) => socketEvent === event)) {
+				sendEvent('unsubscribe', event);
+			}
 		}
 	}
 

@@ -1,39 +1,37 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount } from 'svelte';
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import InputPassword from '$lib/components/InputPassword.svelte';
 	import SettingsCard from '$lib/components/SettingsCard.svelte';
-	import { user } from '$lib/stores/user';
 	import { page } from '$app/state';
 	import { notifications } from '$lib/components/toasts/notifications';
 	import Spinner from '$lib/components/Spinner.svelte';
-	import Collapsible from '$lib/components/Collapsible.svelte';
 	import AP from '~icons/tabler/access-point';
 	import MAC from '~icons/tabler/dna-2';
 	import Home from '~icons/tabler/home';
 	import Devices from '~icons/tabler/devices';
 	import type { ApSettings, ApStatus } from '$lib/types/models';
 
-	let apSettings: ApSettings = $state();
-	let apStatus: ApStatus = $state();
-
-	let formField: any = $state();
+	let apSettings: ApSettings | undefined = $state();
+	let apStatus: ApStatus | undefined = $state();
+	let settingsLoading = $state(true);
+	let statusLoading = $state(true);
 
 	async function getAPStatus() {
 		try {
 			const response = await fetch('/rest/apStatus', {
 				method: 'GET',
 				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
 					'Content-Type': 'application/json'
 				}
 			});
-			apStatus = await response.json();
+			apStatus = response.ok ? (await response.json()) ?? undefined : undefined;
 		} catch (error) {
+			apStatus = undefined;
 			console.error('Error:', error);
 		}
-		return apStatus;
+		statusLoading = false;
 	}
 
 	async function getAPSettings() {
@@ -41,27 +39,24 @@
 			const response = await fetch('/rest/apSettings', {
 				method: 'GET',
 				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
 					'Content-Type': 'application/json'
 				}
 			});
-			apSettings = await response.json();
+			apSettings = response.ok ? (await response.json()) ?? undefined : undefined;
 		} catch (error) {
+			apSettings = undefined;
 			console.error('Error:', error);
 		}
-		return apSettings;
+		settingsLoading = false;
 	}
 
-	const interval = setInterval(async () => {
-		getAPStatus();
-	}, 5000);
-
-	onDestroy(() => clearInterval(interval));
-
 	onMount(() => {
-		if (!page.data.features.security || $user.admin) {
-			getAPSettings();
+		void getAPStatus();
+		const interval = setInterval(() => void getAPStatus(), 5000);
+		if (!page.data.features.security) {
+			void getAPSettings();
 		}
+		return () => clearInterval(interval);
 	});
 
 	let provisionMode = [
@@ -99,7 +94,6 @@
 			const response = await fetch('/rest/apSettings', {
 				method: 'POST',
 				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
 					'Content-Type': 'application/json'
 				},
 				body: JSON.stringify(data)
@@ -115,7 +109,9 @@
 		}
 	}
 
-	function handleSubmitAP() {
+	function handleSubmitAP(event: SubmitEvent) {
+		event.preventDefault();
+		if (!apSettings) return;
 		let valid = true;
 
 		// Validate SSID
@@ -178,12 +174,6 @@
 		}
 	}
 
-	function preventDefault(fn) {
-		return function (event) {
-			event.preventDefault();
-			fn.call(this, event);
-		};
-	}
 </script>
 
 <SettingsCard collapsible={false}>
@@ -194,9 +184,9 @@
 		<span>Access Point</span>
 	{/snippet}
 	<div class="w-full">
-		{#await getAPStatus()}
+		{#if statusLoading}
 			<Spinner />
-		{:then nothing}
+		{:else if apStatus}
 			<div
 				class="flex w-full flex-col space-y-1"
 				transition:slide|local={{ duration: 300, easing: cubicOut }}
@@ -251,28 +241,29 @@
 					</div>
 				</div>
 			</div>
-		{/await}
+		{:else}
+			<p role="status">Access point status unavailable.</p>
+		{/if}
 	</div>
 
-	{#if !page.data.features.security || $user.admin}
+	{#if !page.data.features.security}
 		<div class="bg-base-200 shadow-lg relative grid w-full max-w-2xl self-center overflow-hidden">
 			<div
 				class="min-h-16 flex w-full items-center justify-between space-x-3 p-4 text-xl font-medium"
 			>
 				Change AP Settings
 			</div>
-			{#await getAPSettings()}
+			{#if settingsLoading}
 				<Spinner />
-			{:then nothing}
+			{:else if apSettings}
 				<div
 					class="flex flex-col gap-2 p-0"
 					transition:slide|local={{ duration: 300, easing: cubicOut }}
 				>
 					<form
 						class="fieldset grid w-full grid-cols-1 content-center gap-x-4 gap-y-2 p-4 mb-4 sm:grid-cols-2"
-						onsubmit={preventDefault(handleSubmitAP)}
+						onsubmit={handleSubmitAP}
 						novalidate
-						bind:this={formField}
 					>
 						<div>
 							<label class="label" for="apmode">Provide Access Point ... </label>
@@ -418,7 +409,9 @@
 						</div>
 					</form>
 				</div>
-			{/await}
+			{:else}
+				<p class="p-4" role="status">Access point settings unavailable.</p>
+			{/if}
 		</div>
 	{/if}
 </SettingsCard>

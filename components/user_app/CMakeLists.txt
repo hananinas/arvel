@@ -8,6 +8,7 @@ idf_component_register(
   esp_http_client
   cjson
   sdcard_bsp
+  conversation_store
   lvgl
   ui_bsp
   button_bsp

@@ -1,34 +1,36 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import SettingsCard from '$lib/components/SettingsCard.svelte';
-	import { user } from '$lib/stores/user';
-	import { page } from '$app/state';
 	import { notifications } from '$lib/components/toasts/notifications';
 	import Spinner from '$lib/components/Spinner.svelte';
 	import MQTT from '~icons/tabler/topology-star-3';
 	import Info from '~icons/tabler/info-circle';
 	import type { BrokerSettings } from '$lib/types/models';
 
-	let brokerSettings: BrokerSettings = $state();
-
-	let formField: any = $state();
+	let brokerSettings: BrokerSettings | undefined = $state();
+	let settingsLoading = $state(true);
 
 	async function getBrokerSettings() {
 		try {
 			const response = await fetch('/rest/brokerSettings', {
 				method: 'GET',
 				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
 					'Content-Type': 'application/json'
 				}
 			});
-			brokerSettings = await response.json();
+			brokerSettings = response.ok ? (await response.json()) ?? undefined : undefined;
 		} catch (error) {
+			brokerSettings = undefined;
 			console.error('Error:', error);
 		}
-		return;
+		settingsLoading = false;
 	}
+
+	onMount(() => {
+		void getBrokerSettings();
+	});
 
 	let formErrors = $state({
 		uid: false,
@@ -42,7 +44,6 @@
 			const response = await fetch('/rest/brokerSettings', {
 				method: 'POST',
 				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
 					'Content-Type': 'application/json'
 				},
 				body: JSON.stringify(brokerSettings)
@@ -59,7 +60,9 @@
 		return;
 	}
 
-	function handleSubmitBroker() {
+	function handleSubmitBroker(event: SubmitEvent) {
+		event.preventDefault();
+		if (!brokerSettings) return;
 		let valid = true;
 
 		// Validate unique ID
@@ -96,16 +99,9 @@
 		// Submit JSON to REST API
 		if (valid) {
 			postBrokerSettings();
-			//alert('Form Valid');
 		}
 	}
 
-	function preventDefault(fn) {
-		return function (event) {
-			event.preventDefault();
-			fn.call(this, event);
-		};
-	}
 </script>
 
 <SettingsCard collapsible={true} open={false}>
@@ -116,14 +112,13 @@
 		<span>MQTT Broker Settings</span>
 	{/snippet}
 	<div class="w-full">
-		{#await getBrokerSettings()}
+		{#if settingsLoading}
 			<Spinner />
-		{:then nothing}
+		{:else if brokerSettings}
 			<form
 				class="fieldset"
-				onsubmit={preventDefault(handleSubmitBroker)}
+				onsubmit={handleSubmitBroker}
 				novalidate
-				bind:this={formField}
 				transition:slide|local={{ duration: 300, easing: cubicOut }}
 			>
 				<div class="alert alert-info my-2 shadow-lg">
@@ -216,6 +211,8 @@
 					<button class="btn btn-primary" type="submit">Apply Settings</button>
 				</div>
 			</form>
-		{/await}
+		{:else}
+			<p role="status">MQTT broker settings unavailable.</p>
+		{/if}
 	</div>
 </SettingsCard>

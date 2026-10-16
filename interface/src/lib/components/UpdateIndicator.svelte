@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { modals } from 'svelte-modals';
-	import { user } from '$lib/stores/user';
 	import { notifications } from '$lib/components/toasts/notifications';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import Firmware from '~icons/tabler/refresh-alert';
@@ -64,7 +63,6 @@
 			const apiResponse = await fetch('/rest/downloadUpdate', {
 				method: 'POST',
 				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
 					'Content-Type': 'application/json'
 				},
 				body: JSON.stringify({ download_url: url })
@@ -75,14 +73,10 @@
 	}
 
 	onMount(() => {
-		if (page.data.features.download_firmware && (!page.data.features.security || $user.admin)) {
+		if (page.data.features.download_firmware && !page.data.features.security) {
 			getGithubAPI();
-			const interval = setInterval(
-				async () => {
-					getGithubAPI();
-				},
-				60 * 60 * 1000
-			); // once per hour
+			const interval = setInterval(getGithubAPI, 60 * 60 * 1000); // once per hour
+			return () => clearInterval(interval);
 		}
 	});
 

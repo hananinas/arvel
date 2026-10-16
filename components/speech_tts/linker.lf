@@ -1,0 +1,10 @@
+# CPU-only local speech workspaces must not consume the internal RAM needed
+# by concurrent Codex transport and model/tool callback stacks. DMA buffers,
+# FreeRTOS control blocks and live transport task stacks stay internal.
+[mapping:local_speech_workspace]
+archive: libspeech_tts.a
+entries:
+    if SPIRAM_ALLOW_BSS_SEG_EXTERNAL_MEMORY = y:
+        synthdata (extram_bss)
+        synthesize (extram_bss)
+        wavegen (extram_bss)

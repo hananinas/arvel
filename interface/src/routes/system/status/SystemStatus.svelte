@@ -1,7 +1,6 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
+	import { onMount } from 'svelte';
 	import { modals } from 'svelte-modals';
-	import { user } from '$lib/stores/user';
 	import { page } from '$app/state';
 	import ConfirmDialog from '$lib/components/ConfirmDialog.svelte';
 	import SettingsCard from '$lib/components/SettingsCard.svelte';
@@ -27,37 +26,53 @@
 	import type { SystemInformation, Analytics } from '$lib/types/models';
 	import { socket } from '$lib/stores/socket';
 
-	let systemInformation: SystemInformation = $state();
+	let systemInformation: SystemInformation | undefined = $state();
+	let loading = $state(true);
+	let statusError = $state('');
+	let latestAnalytics: Analytics | undefined;
 
-	async function getSystemStatus() {
+	async function getSystemStatus(signal: AbortSignal) {
 		try {
 			const response = await fetch('/rest/systemStatus', {
 				method: 'GET',
 				headers: {
-					Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic',
 					'Content-Type': 'application/json'
-				}
+				},
+				signal
 			});
-			systemInformation = await response.json();
+			if (!response.ok) throw new Error('System status is unavailable.');
+			const information: SystemInformation | null = await response.json();
+			if (!signal.aborted) {
+				systemInformation = information ? { ...information, ...latestAnalytics } : undefined;
+			}
 		} catch (error) {
-			console.log('Error:', error);
+			if (!signal.aborted) {
+				statusError = 'System status is unavailable.';
+				console.error('Error:', error);
+			}
+		} finally {
+			if (!signal.aborted) loading = false;
 		}
-		return systemInformation;
 	}
 
-	onMount(() => socket.on('analytics', handleSystemData));
+	const handleSystemData = (data: Analytics) => {
+		latestAnalytics = data;
+		if (systemInformation) systemInformation = { ...systemInformation, ...data };
+	};
 
-	onDestroy(() => socket.off('analytics', handleSystemData));
-
-	const handleSystemData = (data: Analytics) =>
-		(systemInformation = { ...systemInformation, ...data });
+	onMount(() => {
+		const controller = new AbortController();
+		socket.on('analytics', handleSystemData);
+		void getSystemStatus(controller.signal);
+		return () => {
+			controller.abort();
+			socket.off('analytics', handleSystemData);
+		};
+	});
 
 	async function postRestart() {
 		const response = await fetch('/rest/restart', {
 			method: 'POST',
-			headers: {
-				Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic'
-			}
 		});
 	}
 
@@ -79,9 +94,6 @@
 	async function postFactoryReset() {
 		const response = await fetch('/rest/factoryReset', {
 			method: 'POST',
-			headers: {
-				Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic'
-			}
 		});
 	}
 
@@ -103,9 +115,6 @@
 	async function postSleep() {
 		const response = await fetch('/rest/sleep', {
 			method: 'POST',
-			headers: {
-				Authorization: page.data.features.security ? 'Bearer ' + $user.bearer_token : 'Basic'
-			}
 		});
 	}
 
@@ -161,9 +170,9 @@
 	{/snippet}
 
 	<div class="w-full overflow-x-auto">
-		{#await getSystemStatus()}
+		{#if loading}
 			<Spinner />
-		{:then nothing}
+		{:else if systemInformation}
 			<div
 				class="flex w-full flex-col space-y-1"
 				transition:slide|local={{ duration: 300, easing: cubicOut }}
@@ -357,7 +366,9 @@
 					</div>
 				</div>
 			</div>
-		{/await}
+		{:else}
+			<p role="alert">{statusError || 'System status is unavailable.'}</p>
+		{/if}
 	</div>
 
 	<div class="mt-4 flex flex-wrap justify-end gap-2">
@@ -366,7 +377,7 @@
 				><Sleep class="mr-2 h-5 w-5" /><span>Sleep</span></button
 			>
 		{/if}
-		{#if !page.data.features.security || $user.admin}
+		{#if !page.data.features.security}
 			<button class="btn btn-primary inline-flex items-center" onclick={confirmRestart}
 				><Power class="mr-2 h-5 w-5" /><span>Restart</span></button
 			>

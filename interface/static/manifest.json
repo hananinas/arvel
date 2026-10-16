@@ -1,12 +1,16 @@
 {
-	"name": "ESP32 SvelteKit",
+	"name": "Unravel Buddy",
+	"short_name": "Buddy",
+	"background_color": "#f0e9df",
+	"theme_color": "#f0e9df",
 	"icons": [
 		{
-			"src": "/favicon.png",
-			"sizes": "48x48 72x72 96x96 128x128 256x256"
+			"src": "/buddy.svg",
+			"sizes": "any",
+			"type": "image/svg+xml"
 		}
 	],
 	"start_url": "/",
-	"display": "fullscreen",
+	"display": "standalone",
 	"orientation": "any"
 }

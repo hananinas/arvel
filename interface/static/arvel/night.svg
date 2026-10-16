@@ -1,0 +1,39 @@
+<svg width="640" height="172" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 172" preserveAspectRatio="xMidYMid slice">
+      <rect width="640" height="172" fill="#18212F"></rect>
+      <rect y="96" width="640" height="76" fill="#1F2B3D"></rect>
+      <g fill="#F3EBD3">
+        <circle cx="40" cy="20" r="1.2"></circle>
+        <circle cx="128" cy="40" r="1"></circle>
+        <circle cx="210" cy="14" r="1.4"></circle>
+        <circle cx="300" cy="34" r="1"></circle>
+        <circle cx="380" cy="14" r="1.2"></circle>
+        <circle cx="440" cy="48" r="1"></circle>
+        <circle cx="500" cy="20" r="1.4"><animate attributeName="opacity" values="1;0.2;1" dur="2.6s" repeatCount="indefinite"></animate></circle>
+        <circle cx="616" cy="92" r="1.1"></circle>
+        <circle cx="530" cy="76" r="1.3"><animate attributeName="opacity" values="0.3;1;0.3" dur="3.1s" repeatCount="indefinite"></animate></circle>
+        <circle cx="470" cy="86" r="1"></circle>
+        <circle cx="626" cy="16" r="1.2"><animate attributeName="opacity" values="1;0.3;1" dur="1.9s" repeatCount="indefinite"></animate></circle>
+        <circle cx="90" cy="64" r="1"></circle>
+      </g>
+      <circle cx="572" cy="42" r="28" fill="#F3EBD3" opacity="0.1"></circle>
+      <circle cx="572" cy="42" r="17" fill="#F3EBD3"></circle>
+      <circle cx="580" cy="36" r="15" fill="#18212F"></circle>
+      <path d="M0 132 C 90 112 170 120 260 128 C 360 138 450 108 540 114 C 590 118 620 112 640 116 L640 172 L0 172Z" fill="#141C28"></path>
+      <g fill="#0F1620">
+        <path d="M500 82 L516 124 L484 124Z"></path>
+        <path d="M528 92 L542 128 L514 128Z"></path>
+        <path d="M600 78 L618 126 L582 126Z"></path>
+      </g>
+      <path d="M0 152 C 120 142 240 146 360 150 C 480 154 560 142 640 146 L640 172 L0 172Z" fill="#101722"></path>
+      <path d="M-10 160 C 50 152 110 156 196 147" stroke="#0B1118" stroke-width="9" fill="none" stroke-linecap="round"></path>
+      <path d="M128 154 C 144 142 154 136 170 132" stroke="#0B1118" stroke-width="4" fill="none" stroke-linecap="round"></path>
+      <g fill="#1E2A38">
+        <ellipse cx="174" cy="130" rx="9" ry="5" transform="rotate(-25 174 130)"></ellipse>
+        <ellipse cx="198" cy="143" rx="10" ry="5" transform="rotate(-15 198 143)"></ellipse>
+      </g>
+      <g fill="#F4D27E">
+        <circle cx="214" cy="120" r="1.8"><animate attributeName="opacity" values="0;1;0" dur="2.4s" repeatCount="indefinite"></animate></circle>
+        <circle cx="560" cy="140" r="1.8"><animate attributeName="opacity" values="1;0;1" dur="3s" repeatCount="indefinite"></animate></circle>
+        <circle cx="610" cy="132" r="1.6"><animate attributeName="opacity" values="0;1;0" dur="2s" begin="0.6s" repeatCount="indefinite"></animate></circle>
+      </g>
+    </svg>

@@ -1,23 +1,21 @@
 <script lang="ts">
-	import { onDestroy, onMount } from 'svelte';
-	import { page } from '$app/state';
+	import { onMount } from 'svelte';
 	import SettingsCard from '$lib/components/SettingsCard.svelte';
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
 	import { Chart, registerables } from 'chart.js';
-	import * as LuxonAdapter from 'chartjs-adapter-luxon';
+	import 'chartjs-adapter-luxon';
 	import Battery from '~icons/tabler/battery-automotive';
 	import { daisyColor } from '$lib/DaisyUiHelper';
 	import { batteryHistory } from '$lib/stores/battery';
 
 	Chart.register(...registerables);
-	Chart.register(LuxonAdapter);
 
-	let heapChartElement: HTMLCanvasElement = $state();
-	let heapChart: Chart;
+	let heapChartElement: HTMLCanvasElement | undefined = $state();
 
 	onMount(() => {
-		heapChart = new Chart(heapChartElement, {
+		if (!heapChartElement) return;
+		const heapChart = new Chart<'line', number[], number>(heapChartElement, {
 			type: 'line',
 			data: {
 				labels: $batteryHistory.timestamp,
@@ -101,44 +99,18 @@
 			}
 		});
 
-		setInterval(() => {
-			updateData(), 5000;
+		const unsubscribe = batteryHistory.subscribe((history) => {
+			heapChart.data.labels = history.timestamp;
+			heapChart.data.datasets[0].data = history.soc;
+			heapChart.data.datasets[1].data = history.charging;
+			heapChart.update('none');
 		});
+
+		return () => {
+			unsubscribe();
+			heapChart.destroy();
+		};
 	});
-
-	function updateData() {
-		heapChart.data.labels = $batteryHistory.timestamp;
-		heapChart.data.datasets[0].data = $batteryHistory.soc;
-		heapChart.data.datasets[1].data = $batteryHistory.charging;
-		heapChart.update('none');
-	}
-
-	function convertSeconds(seconds: number) {
-		// Calculate the number of seconds, minutes, hours, and days
-		let minutes = Math.floor(seconds / 60);
-		let hours = Math.floor(minutes / 60);
-		let days = Math.floor(hours / 24);
-
-		// Calculate the remaining hours, minutes, and seconds
-		hours = hours % 24;
-		minutes = minutes % 60;
-		seconds = seconds % 60;
-
-		// Create the formatted string
-		let result = '';
-		if (days > 0) {
-			result += days + ' day' + (days > 1 ? 's' : '') + ' ';
-		}
-		if (hours > 0) {
-			result += hours + ' hour' + (hours > 1 ? 's' : '') + ' ';
-		}
-		if (minutes > 0) {
-			result += minutes + ' minute' + (minutes > 1 ? 's' : '') + ' ';
-		}
-		result += seconds + ' second' + (seconds > 1 ? 's' : '');
-
-		return result;
-	}
 </script>
 
 <SettingsCard collapsible={false}>
@@ -149,6 +121,9 @@
 		<span>Battery History</span>
 	{/snippet}
 
+	{#if $batteryHistory.timestamp.length === 0}
+		<p role="status">Waiting for battery history…</p>
+	{/if}
 	<div class="w-full overflow-x-auto">
 		<div
 			class="flex w-full flex-col space-y-1 h-60"

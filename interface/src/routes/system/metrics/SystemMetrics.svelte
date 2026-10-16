@@ -1,5 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import SettingsCard from '$lib/components/SettingsCard.svelte';
 	import { slide } from 'svelte/transition';
 	import { cubicOut } from 'svelte/easing';
@@ -7,352 +6,109 @@
 	import Metrics from '~icons/tabler/report-analytics';
 	import { daisyColor } from '$lib/DaisyUiHelper';
 	import { analytics } from '$lib/stores/analytics';
+	import type { Analytics } from '$lib/types/models';
 
 	Chart.register(...registerables);
 
-	let heapChartElement: HTMLCanvasElement | undefined = $state();
-	let heapChart: Chart;
+	let hasPsramData = $derived($analytics.psram_size.some((size) => size > 0));
 
-	let psramChartElement: HTMLCanvasElement | undefined = $state();
-	let psramChart: Chart;
-
-	let filesystemChartElement: HTMLCanvasElement | undefined = $state();
-	let filesystemChart: Chart;
-
-	let temperatureChartElement: HTMLCanvasElement | undefined = $state();
-	let temperatureChart: Chart;
-
-	// Check if PSRAM data is available
-	let hasPsramData = $derived(Math.max(...$analytics.psram_size) > 0);
-
-	onMount(() => {
-		heapChart = new Chart(heapChartElement, {
+	function metricChart(
+		element: HTMLCanvasElement,
+		title: string,
+		series: { label: string; key: keyof Analytics; color: string }[],
+		maximum?: keyof Analytics
+	) {
+		const chart = new Chart<'line', number[], number>(element, {
 			type: 'line',
 			data: {
-				labels: $analytics.uptime,
-				datasets: [
-					{
-						label: 'Used',
-						borderColor: daisyColor('--color-primary'),
-						backgroundColor: daisyColor('--color-primary', 50),
-						borderWidth: 2,
-						data: $analytics.used_heap,
-						yAxisID: 'y'
-					},
-					{
-						label: 'Max Alloc',
-						borderColor: daisyColor('--color-secondary'),
-						backgroundColor: daisyColor('--color-secondary', 50),
-						borderWidth: 2,
-						data: $analytics.max_alloc_heap,
-						yAxisID: 'y'
-					}
-				]
+				labels: [],
+				datasets: series.map(({ label, color }) => ({
+					label,
+					borderColor: daisyColor(color),
+					backgroundColor: daisyColor(color, 50),
+					borderWidth: 2,
+					data: [],
+					yAxisID: 'y'
+				}))
 			},
 			options: {
 				maintainAspectRatio: false,
 				responsive: true,
 				plugins: {
-					legend: {
-						display: true
-					},
-					tooltip: {
-						mode: 'index',
-						intersect: false
-					}
+					legend: { display: true },
+					tooltip: { mode: 'index', intersect: false }
 				},
-				elements: {
-					point: {
-						radius: 1
-					}
-				},
+				elements: { point: { radius: 1 } },
 				scales: {
 					x: {
-						grid: {
-							color: daisyColor('--color-base-content', 10)
-						},
-						ticks: {
-							color: daisyColor('--color-base-content')
-						},
+						grid: { color: daisyColor('--color-base-content', 10) },
+						ticks: { color: daisyColor('--color-base-content') },
 						display: false
 					},
 					y: {
 						type: 'linear',
 						title: {
 							display: true,
-							text: 'Memory [KB]',
+							text: title,
 							color: daisyColor('--color-base-content'),
-							font: {
-								size: 16,
-								weight: 'bold'
-							}
+							font: { size: 16, weight: 'bold' }
 						},
 						position: 'left',
-						min: 0,
-						max: Math.round(Math.max(...$analytics.total_heap)),
+						min: maximum ? 0 : undefined,
+						suggestedMin: maximum ? undefined : 20,
+						suggestedMax: maximum ? undefined : 100,
 						grid: { color: daisyColor('--color-base-content', 10) },
-						ticks: {
-							color: daisyColor('--color-base-content')
-						},
+						ticks: { color: daisyColor('--color-base-content') },
 						border: { color: daisyColor('--color-base-content', 10) }
 					}
 				}
 			}
 		});
-		
-		// Only create PSRAM chart if PSRAM data is available
-		if (hasPsramData) {
-			psramChart = new Chart(psramChartElement, {
-			type: 'line',
-			data: {
-				labels: $analytics.uptime,
-				datasets: [
-					{
-						label: 'Used',
-						borderColor: daisyColor('--color-primary'),
-						backgroundColor: daisyColor('--color-primary', 50),
-						borderWidth: 2,
-						data: $analytics.used_psram,
-						yAxisID: 'y'
-					}
-				]
-			},
-			options: {
-				maintainAspectRatio: false,
-				responsive: true,
-				plugins: {
-					legend: {
-						display: true
-					},
-					tooltip: {
-						mode: 'index',
-						intersect: false
-					}
-				},
-				elements: {
-					point: {
-						radius: 1
-					}
-				},
-				scales: {
-					x: {
-						grid: {
-							color: daisyColor('--color-base-content', 10)
-						},
-						ticks: {
-							color: daisyColor('--color-base-content')
-						},
-						display: false
-					},
-					y: {
-						type: 'linear',
-						title: {
-							display: true,
-							text: 'PSRAM [KB]',
-							color: daisyColor('--color-base-content'),
-							font: {
-								size: 16,
-								weight: 'bold'
-							}
-						},
-						position: 'left',
-						min: 0,
-						max: Math.round(Math.max(...$analytics.psram_size)),
-						grid: { color: daisyColor('--color-base-content', 10) },
-						ticks: {
-							color: daisyColor('--color-base-content')
-						},
-						border: { color: daisyColor('--color-base-content', 10) }
-					}
-				}
+
+		const unsubscribe = analytics.subscribe((history) => {
+			chart.data.labels = history.uptime;
+			series.forEach(({ key }, index) => {
+				chart.data.datasets[index].data = history[key];
+			});
+			const y = chart.options.scales?.y;
+			if (maximum && y) {
+				const capacities = history[maximum];
+				y.max = capacities.length > 0 ? Math.max(...capacities) : undefined;
 			}
+			chart.update('none');
 		});
-		}
-		
-		filesystemChart = new Chart(filesystemChartElement, {
-			type: 'line',
-			data: {
-				labels: $analytics.uptime,
-				datasets: [
-					{
-						label: 'Used',
-						borderColor: daisyColor('--color-primary'),
-						backgroundColor: daisyColor('--color-primary', 50),
-						borderWidth: 2,
-						data: $analytics.fs_used,
-						yAxisID: 'y'
-					}
-				]
-			},
-			options: {
-				maintainAspectRatio: false,
-				responsive: true,
-				plugins: {
-					legend: {
-						display: true
-					},
-					tooltip: {
-						mode: 'index',
-						intersect: false
-					}
-				},
-				elements: {
-					point: {
-						radius: 1
-					}
-				},
-				scales: {
-					x: {
-						grid: {
-							color: daisyColor('--color-base-content', 10)
-						},
-						ticks: {
-							color: daisyColor('--color-base-content')
-						},
-						display: false
-					},
-					y: {
-						type: 'linear',
-						title: {
-							display: true,
-							text: 'File System [KB]',
-							color: daisyColor('--color-base-content'),
-							font: {
-								size: 16,
-								weight: 'bold'
-							}
-						},
-						position: 'left',
-						min: 0,
-						max: Math.round(Math.max(...$analytics.fs_total)),
-						grid: { color: daisyColor('--color-base-content', 10) },
-						ticks: {
-							color: daisyColor('--color-base-content')
-						},
-						border: { color: daisyColor('--color-base-content', 10) }
-					}
-				}
+
+		return {
+			destroy() {
+				unsubscribe();
+				chart.destroy();
 			}
-		});
-		temperatureChart = new Chart(temperatureChartElement, {
-			type: 'line',
-			data: {
-				labels: $analytics.uptime,
-				datasets: [
-					{
-						label: 'Core Temperature',
-						borderColor: daisyColor('--color-primary'),
-						backgroundColor: daisyColor('--color-primary', 50),
-						borderWidth: 2,
-						data: $analytics.core_temp,
-						yAxisID: 'y'
-					}
-				]
-			},
-			options: {
-				maintainAspectRatio: false,
-				responsive: true,
-				plugins: {
-					legend: {
-						display: true
-					},
-					tooltip: {
-						mode: 'index',
-						intersect: false
-					}
-				},
-				elements: {
-					point: {
-						radius: 1
-					}
-				},
-				scales: {
-					x: {
-						grid: {
-							color: daisyColor('--color-base-content', 10)
-						},
-						ticks: {
-							color: daisyColor('--color-base-content')
-						},
-						display: false
-					},
-					y: {
-						type: 'linear',
-						title: {
-							display: true,
-							text: 'Core Temperature [°C]',
-							color: daisyColor('--color-base-content'),
-							font: {
-								size: 16,
-								weight: 'bold'
-							}
-						},
-						position: 'left',
-						suggestedMin: 20,
-						suggestedMax: 100,
-						grid: { color: daisyColor('--color-base-content', 10) },
-						ticks: {
-							color: daisyColor('--color-base-content')
-						},
-						border: { color: daisyColor('--color-base-content', 10) }
-					}
-				}
-			}
-		});
-		setInterval(() => {
-			updateData(), 2000;
-		});
-	});
-
-	function updateData() {
-		heapChart.data.labels = $analytics.uptime;
-		heapChart.data.datasets[0].data = $analytics.used_heap;
-		heapChart.data.datasets[1].data = $analytics.max_alloc_heap;
-		heapChart.update('none');
-		heapChart.options.scales.y.max = Math.round(Math.max(...$analytics.total_heap));
-
-		if (hasPsramData) {
-			psramChart.data.labels = $analytics.uptime;
-			psramChart.data.datasets[0].data = $analytics.used_psram;
-			psramChart.update('none');
-			psramChart.options.scales.y.max = Math.round(Math.max(...$analytics.psram_size));
-		}
-
-		filesystemChart.data.labels = $analytics.uptime;
-		filesystemChart.data.datasets[0].data = $analytics.fs_used;
-		filesystemChart.update('none');
-		filesystemChart.options.scales.y.max = Math.round(Math.max(...$analytics.fs_total));
-
-		temperatureChart.data.labels = $analytics.uptime;
-		temperatureChart.data.datasets[0].data = $analytics.core_temp;
-		temperatureChart.update('none');
+		};
 	}
 
-	function convertSeconds(seconds: number) {
-		// Calculate the number of seconds, minutes, hours, and days
-		let minutes = Math.floor(seconds / 60);
-		let hours = Math.floor(minutes / 60);
-		let days = Math.floor(hours / 24);
+	function heapMetrics(element: HTMLCanvasElement) {
+		return metricChart(element, 'Memory [KB]', [
+			{ label: 'Used', key: 'used_heap', color: '--color-primary' },
+			{ label: 'Max Alloc', key: 'max_alloc_heap', color: '--color-secondary' }
+		], 'total_heap');
+	}
 
-		// Calculate the remaining hours, minutes, and seconds
-		hours = hours % 24;
-		minutes = minutes % 60;
-		seconds = seconds % 60;
+	function psramMetrics(element: HTMLCanvasElement) {
+		return metricChart(element, 'PSRAM [KB]', [
+			{ label: 'Used', key: 'used_psram', color: '--color-primary' }
+		], 'psram_size');
+	}
 
-		// Create the formatted string
-		let result = '';
-		if (days > 0) {
-			result += days + ' day' + (days > 1 ? 's' : '') + ' ';
-		}
-		if (hours > 0) {
-			result += hours + ' hour' + (hours > 1 ? 's' : '') + ' ';
-		}
-		if (minutes > 0) {
-			result += minutes + ' minute' + (minutes > 1 ? 's' : '') + ' ';
-		}
-		result += seconds + ' second' + (seconds > 1 ? 's' : '');
+	function filesystemMetrics(element: HTMLCanvasElement) {
+		return metricChart(element, 'File System [KB]', [
+			{ label: 'Used', key: 'fs_used', color: '--color-primary' }
+		], 'fs_total');
+	}
 
-		return result;
+	function temperatureMetrics(element: HTMLCanvasElement) {
+		return metricChart(element, 'Core Temperature [°C]', [
+			{ label: 'Core Temperature', key: 'core_temp', color: '--color-primary' }
+		]);
 	}
 </script>
 
@@ -364,12 +120,15 @@
 		<span>System Metrics</span>
 	{/snippet}
 
+	{#if $analytics.uptime.length === 0}
+		<p role="status">Waiting for system metrics…</p>
+	{/if}
 	<div class="w-full overflow-x-auto">
 		<div
 			class="flex w-full flex-col space-y-1 h-60"
 			transition:slide|local={{ duration: 300, easing: cubicOut }}
 		>
-			<canvas bind:this={heapChartElement}></canvas>
+			<canvas use:heapMetrics></canvas>
 		</div>
 	</div>
 	{#if hasPsramData}
@@ -378,7 +137,7 @@
 				class="flex w-full flex-col space-y-1 h-60"
 				transition:slide|local={{ duration: 300, easing: cubicOut }}
 			>
-				<canvas bind:this={psramChartElement}></canvas>
+				<canvas use:psramMetrics></canvas>
 			</div>
 		</div>
 	{/if}
@@ -387,7 +146,7 @@
 			class="flex w-full flex-col space-y-1 h-52"
 			transition:slide|local={{ duration: 300, easing: cubicOut }}
 		>
-			<canvas bind:this={filesystemChartElement}></canvas>
+			<canvas use:filesystemMetrics></canvas>
 		</div>
 	</div>
 	<div class="w-full overflow-x-auto">
@@ -395,7 +154,7 @@
 			class="flex w-full flex-col space-y-1 h-52"
 			transition:slide|local={{ duration: 300, easing: cubicOut }}
 		>
-			<canvas bind:this={temperatureChartElement}></canvas>
+			<canvas use:temperatureMetrics></canvas>
 		</div>
 	</div>
 </SettingsCard>

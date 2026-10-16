@@ -1,50 +1,45 @@
 <script lang="ts">
-	import { modals, onBeforeClose } from 'svelte-modals';
+	import { modals, onBeforeClose, type ModalProps } from 'svelte-modals';
 	import { focusTrap } from 'svelte-focus-trap';
 	import { fly } from 'svelte/transition';
 	import { telemetry } from '$lib/stores/telemetry';
 	import Cancel from '~icons/tabler/x';
 
-	// provided by <Modals />
-	interface Props {
-		isOpen: boolean;
+	interface Props extends ModalProps<void> {
+		onConfirm?: () => void;
 	}
 
 	let { isOpen }: Props = $props();
 
-	let updating = $state(true);
-
-	let progress = $state(0);
+	const ota = $derived($telemetry.download_ota);
+	const updating = $derived(ota.status !== 'error');
+	const progress = $derived(
+		ota.status === 'progress' &&
+			typeof ota.progress === 'number' &&
+			Number.isFinite(ota.progress) &&
+			ota.progress >= 0 &&
+			ota.progress <= 100
+			? ota.progress
+			: undefined
+	);
+	const message = $derived(
+		ota.status === 'progress'
+			? 'Downloading ...'
+			: ota.status === 'error'
+				? ota.error || 'Firmware update failed.'
+				: ota.status === 'finished'
+					? 'Restarting ...'
+					: 'Preparing ...'
+	);
 
 	$effect(() => {
-		if ($telemetry.download_ota.status == 'progress') {
-			progress = $telemetry.download_ota.progress;
-		}
-	});
-
-	$effect(() => {
-		if ($telemetry.download_ota.status == 'error') {
-			updating = false;
-		}
-	});
-
-	let message = $state('Preparing ...');
-	let timerId: number = $state();
-
-	$effect(() => {
-		if ($telemetry.download_ota.status == 'progress') {
-			message = 'Downloading ...';
-		} else if ($telemetry.download_ota.status == 'error') {
-			message = $telemetry.download_ota.error;
-		} else if ($telemetry.download_ota.status == 'finished') {
-			message = 'Restarting ...';
-			progress = 0;
-			// Reload page after 20 sec
-			timerId = setTimeout(() => {
-				modals.closeAll();
-				location.reload();
-			}, 20000);
-		}
+		if (ota.status !== 'finished') return;
+		// Reload after the device has had time to restart; cancel on teardown.
+		const timerId = setTimeout(() => {
+			modals.closeAll();
+			location.reload();
+		}, 20000);
+		return () => clearTimeout(timerId);
 	});
 
 	onBeforeClose(() => {
@@ -71,7 +66,7 @@
 			<div class="divider my-2"></div>
 			<div class="overflow-y-auto">
 				<div class="bg-base-100 flex flex-col items-center justify-center p-6">
-					{#if $telemetry.download_ota.status == 'progress'}
+					{#if progress !== undefined}
 						<progress class="progress progress-primary w-56" value={progress} max="100"></progress>
 					{:else}
 						<progress class="progress progress-primary w-56"></progress>

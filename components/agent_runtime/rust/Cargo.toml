@@ -1,0 +1,26 @@
+[package]
+name = "unravel-agent-esp32"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "AGPL-3.0-only"
+publish = false
+
+[lib]
+name = "unravel_agent_esp32"
+crate-type = ["staticlib"]
+
+[workspace]
+
+[dependencies]
+unravel-agent-runtime = { path = "vendor/unravel-agent-runtime" }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", default-features = false, features = ["rt", "time", "sync", "macros"] }
+
+[profile.release]
+opt-level = "s"
+lto = "thin"
+codegen-units = 1
+panic = "abort"

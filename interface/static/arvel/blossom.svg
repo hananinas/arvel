@@ -1,0 +1,27 @@
+<svg width="640" height="172" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 172" preserveAspectRatio="xMidYMid slice">
+      <rect width="640" height="172" fill="#F6E9EC"></rect>
+      <path d="M300 120 L380 56 L460 120Z" fill="#E3DDE8"></path>
+      <path d="M362 70 L380 56 L398 70 L390 74 L380 68 L370 74Z" fill="#FFFFFF"></path>
+      <path d="M0 132 C 120 118 240 124 360 130 C 470 136 560 120 640 124 L640 172 L0 172Z" fill="#D6E5D2"></path>
+      <path d="M570 140 C 568 116 572 96 580 80 M576 100 L552 84 M578 92 L606 76" stroke="#5F4A44" stroke-width="5" fill="none" stroke-linecap="round"></path>
+      <g>
+        <circle cx="552" cy="74" r="18" fill="#F2B8C6"></circle>
+        <circle cx="582" cy="62" r="22" fill="#F6C9D4"></circle>
+        <circle cx="612" cy="74" r="18" fill="#E99AAE"></circle>
+        <circle cx="570" cy="84" r="14" fill="#E99AAE"></circle>
+      </g>
+      <path d="M0 154 C 160 146 320 150 480 156 C 560 159 600 154 640 155 L640 172 L0 172Z" fill="#B9D3B4"></path>
+      <g fill="#F2B8C6">
+        <animateTransform attributeName="transform" type="translate" values="0 -30;-24 70" dur="7s" repeatCount="indefinite"></animateTransform>
+        <ellipse cx="540" cy="60" rx="3" ry="2"></ellipse><ellipse cx="600" cy="40" rx="3" ry="2"></ellipse><ellipse cx="480" cy="30" rx="3" ry="2"></ellipse>
+        <ellipse cx="260" cy="50" rx="3" ry="2"></ellipse><ellipse cx="380" cy="20" rx="3" ry="2"></ellipse><ellipse cx="630" cy="90" rx="3" ry="2"></ellipse>
+      </g>
+      <path d="M-10 160 C 50 152 110 156 196 147" stroke="#5F4A44" stroke-width="9" fill="none" stroke-linecap="round"></path>
+      <path d="M128 154 C 144 142 154 136 170 132" stroke="#5F4A44" stroke-width="4" fill="none" stroke-linecap="round"></path>
+      <g fill="#F2B8C6">
+        <circle cx="172" cy="130" r="6"></circle><circle cx="196" cy="144" r="6"></circle><circle cx="150" cy="140" r="5" fill="#E99AAE"></circle>
+      </g>
+      <g fill="#FFF3C4">
+        <circle cx="172" cy="130" r="1.6"></circle><circle cx="196" cy="144" r="1.6"></circle>
+      </g>
+    </svg>

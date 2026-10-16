@@ -2,7 +2,6 @@
 	import type { PageData } from './$types';
 	import SystemMetrics from './SystemMetrics.svelte';
 	import BatteryMetrics from './BatteryMetrics.svelte';
-	import { user } from '$lib/stores/user';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 

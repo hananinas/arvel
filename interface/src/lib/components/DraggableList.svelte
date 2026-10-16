@@ -72,12 +72,11 @@
 </section>
 
 <style>
-	@reference "$src/app.css";
 	:global(.dragzone-outline) {
-		@apply outline-solid outline-2 outline-(--color-primary);
+		outline: 2px solid var(--color-primary);
 	}
 	:global(#dnd-action-dragged-el) {
-		@apply outline-solid outline-2 outline-current;
+		outline: 2px solid currentColor;
 
 	}
 </style>

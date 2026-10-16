@@ -1,0 +1,39 @@
+Unravel Agent Runtime
+
+This repository extracts shared agent-runtime and model-provider implementations
+from the following GNU Affero General Public License v3 projects:
+
+ServoLoop
+  https://github.com/unravelaidk/servoloop
+  Source revision: a2e8d667e0027d45fa9ce8573169b9971dcde021
+  Extracted modules: crates/servoloop-core and crates/servoloop-providers.
+
+Khadim
+  https://github.com/unravelaidk/khadim
+  Source revision: e1768753c5c004668f7363f3d5e140e739813011
+  Shared provider compatibility requirements and model/tool execution behavior
+  originate in crates/khadim-ai-core and crates/khadim-coding-agent.
+
+The provider crate's NOTICE retains the earlier attribution of ServoLoop's
+adaptations from Khadim. Existing copyright and license notices are retained.
+This extraction and its modifications are distributed under AGPL-3.0-only;
+see LICENSE.
+
+ESP32 downstream integration (local modifications, 2026-10-14)
+------------------------------------------------------------
+Vendored from https://github.com/unravelaidk/unravel-agent-runtime,
+revision c507d6b2b2514527a572b0d2331aef34961ba652,
+source subtree crates/unravel-agent-runtime/src.
+
+This downstream copy is modified. Its standalone Cargo manifest omits desktop
+Tokio features. Local tool/orchestrator/export changes carry real provider call
+identity, owning execution identity, deadline/cancellation context and explicit
+tool result states, including unknown outcomes. AgentLoop has a synchronous
+checkpoint hook before requests and between its public turn iterations for
+the embedded archive/complete-group compaction bridge.
+
+Attribution to the Unravel Agent Runtime, ServoLoop and Khadim authors and
+contributors, their source revisions above, and existing copyright notices
+are retained. These local modifications remain AGPL-3.0-only; see LICENSE
+and ../../NOTICE. This notice does not relicense separately supplied SDKs,
+fonts, speech engines, artwork, models or serving containers.
