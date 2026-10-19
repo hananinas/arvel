@@ -53,7 +53,7 @@ For a fresh private configuration and board selection, follow the README's menuc
 idf.py -D SDKCONFIG=sdkconfig.local -D SDKCONFIG_DEFAULTS=sdkconfig.defaults build
 ```
 
-The round-2 build ran with networking isolated, physical devices hidden and `sdkconfig.local` mounted read-only. npm installation used its local cache in offline mode. No flash, monitor, erase or provider request was performed. The build image can contain credentials and is not a public submission attachment.
+The round-2 and round-3 firmware builds ran with networking isolated, physical devices hidden and `sdkconfig.local` mounted read-only. npm installation used its local cache in offline mode. No flash, monitor, erase or provider request was performed. The build image can contain credentials and is not a public submission attachment.
 
 ## Verify without a device
 
@@ -80,7 +80,7 @@ For web development, run the README's `UNRAVEL_DEVICE_URL=... npm run dev -- --h
 
 ## Verification results
 
-Round 1 is the recorded 2026-10-19 baseline associated with repair `3d1e899`; its firmware was built before that repair was committed and embedded `db0c837-dirty`. Round 2 is new local evidence, not a device or GPU run. Detailed command results and failed harness attempts are committed in [submission verification](submission-verification.md).
+Round 1 is the recorded 2026-10-19 baseline associated with repair `3d1e899`; its firmware was built before that repair was committed and embedded `db0c837-dirty`. Rounds 2–3 are local evidence, not device or GPU runs. Detailed command results and failed harness attempts are committed in [submission verification](submission-verification.md).
 
 | Gate | Round 1 | Round 2 |
 | --- | --- | --- |
@@ -99,11 +99,19 @@ Round 1 is the recorded 2026-10-19 baseline associated with repair `3d1e899`; it
 
 Both firmware sizes use a 6,291,456-byte (`0x600000`) app slot. Round-2 firmware was built at diagnostic commit `255fa83`; subsequent docs/host-only regression commits are not represented by its embedded revision. SHA-256: `1ed1c7427e0473fefb59a939ecd83f10a2cb6db08cbd5fcaf4d3e68951e9efc4`. Free app-slot space is not a measurement of runtime heap/audio headroom.
 
+| Gate | Build commit / embedded revision | Round-3 size and free app-slot space | Binary SHA-256 |
+| --- | --- | --- | --- |
+| Round-3 ESP-IDF firmware build | `8fea697a7911d37a6f8eb81bc30d289d95decfd8` / `8fea697` | 5,310,816 bytes (`0x510960`); 980,640 bytes free (`0xef6a0`), 15.586853% (IDF: 16%); slot 6,291,456 bytes | `db5ba465dd55020debdc3af411bc80958269fd5f2a33d091af68bd9487198a0c` |
+
+Round-3 final exits: interface check **0** (0 errors / 0 warnings), interface tests **0** (29 passed), static build **0**, real-SQLite storage suite **0**, firmware reconfigure **0** and `idf.py build` **0**. All 85 refreshed compressed assets were found in the firmware; direct headless Chrome rendered the embedded owner page against isolated logged-out REST fixtures. This firmware predates the final documentation commit.
+
+**Regeneration is verified; byte determinism is not.** The documented script rebuilt and refreshed `main/WWWData.h`, but identical static inputs produced different gzip timestamps on Python 3.12; SvelteKit also uses a time-based default build version. The initial incremental CMake run did not regenerate after a header-mtime-only change, so the documented standalone script was invoked explicitly. This round commits the refreshed assets, not a build-system reproducibility repair. See the recorded probe and exact commands in [round-3 verification](submission-verification.md#round-3--refreshed-embedded-owner-ui-and-final-confirmation).
+
 The new ledger regression admits 80 distinct delegation run IDs with read-only history operations. After archive changes and storage reopen, 79 completed results remain byte-exact and cannot be re-admitted for execution; conflicts are rejected, and the unfinished last read becomes unknown. It tests the durable admission boundary, not the full live voice/model/callback path. **Production Codex voice still has its separate 64-delegation ceiling.**
 
 ## Current limitations and release checklist
 
-- **Inference:** the Nebius/Nemotron endpoint above is pending. No qualifying live speech, tool call, deployment latency, soak result or provider availability was established in either offline pass. Codex live access also depends on account eligibility. Do not present an adapter, settings choice or health response as successful model inference.
+- **Inference:** the Nebius/Nemotron endpoint above is pending. No qualifying live speech, tool call, deployment latency, soak result or provider availability was established in the offline submission rounds. Codex live access also depends on account eligibility. Do not present an adapter, settings choice or health response as successful model inference.
 - **Physical acceptance:** display/touch, microphone/speaker, interruption, long-call/Opus watchdog behavior, restart/SD-fault continuity, Niko effects and runtime resource headroom still need authorized hardware runs. The 64-ID live-voice ceiling is unchanged pending that baseline. The echo guard is not acoustic echo cancellation.
 - **Privacy/security:** owner HTTP is LAN-only; passwords, cookies and API keys can be exposed on the LAN. Credentials in flash/NVS and SD history are unencrypted. Selected messages/audio/tool context leave the board for configured cloud services. Rotate credentials previously exposed in Git; never record sign-in codes, secrets or household transcripts in the demo.
 - **Dependency diagnostics:** the focus-trap package's missing Svelte exports condition remains visible. Firmware vendor mixed-enum deprecation and libc executable-stack warnings remain. No warning suppression or node_modules patch was used.
@@ -122,5 +130,8 @@ Arvel predates this submission. The historical commits below identify the baseli
 | 2026-10-19 | `255fa83cd57c870d7403140edcc40d58141672d8` | Round 2: keyboard-accessible transcript focus link and ephemeral Vite test listeners; retained dependency warning documented |
 | 2026-10-19 | `e77db06f09127376883dd7d6461ea75741fec2fa` | Round 2: exercised EIM/build/host instructions and committed verification evidence |
 | 2026-10-19 | `2026b872cda24693f7c4a4cb94b8e64e8bdba8db` | Round 2: one 80-ID durable read-only delegation ledger regression; no production speech_live changes |
+| 2026-10-19 | `50e7b221300e29c995ea594ac73f7ee77d5d7bd4` | Round 2: judge submission draft and timed 2:50 demo storyboard |
+| 2026-10-19 | `8fea697a7911d37a6f8eb81bc30d289d95decfd8` | Round 3: regenerate and embed fixed owner UI assets |
+| 2026-10-19 | This commit: `docs(submission): finalize round-3 evidence and Devpost form` | Round 3: build measurements, final gate evidence and paste-ready Devpost form with honest deployment/access placeholders |
 
-The commit first adding this draft and the [2:50 storyboard](demo-video-storyboard.md) records the documentation deliverable. Its identity is available from `git log --diff-filter=A --format='%H %cs %s' -- docs/SUBMISSION.md`; a file cannot contain the SHA of its own introducing commit. The final handoff lists all added commits.
+The [Devpost form draft](DEVPOST_FORM.md) contains the actual field text, grounded per-tool feedback, this dated history table and the proposed December 1–15 judging-access arrangement. The final documentation row identifies its own commit by subject because a file cannot contain its own introducing commit's SHA. The final handoff lists every pushed commit, including that SHA.

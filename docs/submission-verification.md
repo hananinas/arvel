@@ -1,6 +1,6 @@
 # Submission verification — 2026-10-19
 
-Host-only round 2. No flash, monitor, erase, device contact, provider request or registry query. Builds and host suites use a network-isolated Bubblewrap namespace with private `/dev` and read-only `sdkconfig.local`. Existing untracked files are not submission changes.
+Host-only rounds 2–3. No flash, monitor, erase, device contact or provider request. Builds and host suites use a network-isolated Bubblewrap namespace with private `/dev` and read-only `sdkconfig.local`. Existing untracked files are not submission changes. Round 3 also rendered embedded assets in local headless Chrome against isolated REST fixtures.
 
 ## Diagnostics
 
@@ -60,3 +60,37 @@ It admits 80 distinct delegation `run_id`s and provider call IDs in one conversa
 `CC=gcc CXX=g++ bash components/conversation_store/test/run.sh` exited **0**: checked FAT VFS, the existing 1,000-turn archive/fault/crash/queue/heap checks and the new 80-ID scenario passed. The default Nix compiler initially failed with `fatal error: 'openssl/sha.h' file not found` (exit 1); selecting installed system GCC/G++ resolved the host include-path mismatch without repository build changes.
 
 Production `speech_live.cpp` is unchanged: its `delegations[64][129]` array and `delegation_count == 64` admission check still fail at `delegation_limit` on a 65th distinct live delegation. That is a source-observed current limitation, not a live failure reproduced by this host regression. Passing the durable ledger at 80 IDs does **not** establish more than 64 delegations in a real Codex voice call. Removal remains deferred until a physical baseline exists.
+
+## Round 3 — refreshed embedded owner UI and final confirmation
+
+Round-3 firmware at asset commit **`8fea697a7911d37a6f8eb81bc30d289d95decfd8`**, embedded app revision **`8fea697`**: **5,310,816 bytes / `0x510960`**, app slot **6,291,456 bytes / `0x600000`**, free **980,640 bytes / `0xef6a0` / 15.586853%**, IDF rounded **16%**. Binary SHA-256: **`db5ba465dd55020debdc3af411bc80958269fd5f2a33d091af68bd9487198a0c`**. This image predates the round-3 documentation commit; app-slot space is not runtime heap/audio headroom. Private firmware binaries remain local, not submission attachments.
+
+### Regeneration and determinism finding
+
+- A fresh `npm --prefix interface run build` exited **0**. The documented `python3 scripts/build_interface_idf.py .` then ran its offline-cached `npm install`, rebuilt the frontend and regenerated `main/WWWData.h`, exiting **0**. To exercise generation rather than the timestamp skip, only the generated header's mtime was set to epoch zero beforehand; frontend source and configuration were not edited.
+- The initial incremental firmware build exited **0** but did not regenerate the header after that mtime-only change. The standalone documented script was therefore used explicitly. The subsequent firmware build visibly recompiled `web_server.cpp`, relinked and generated the refreshed image. `idf.py -D SDKCONFIG=sdkconfig.local -D SDKCONFIG_DEFAULTS=sdkconfig.defaults reconfigure` followed by `idf.py build` both exited **0**; the final 2,023-step build refreshed the cached app revision to `8fea697`.
+- **The current pipeline is not byte-deterministic.** On this host Python 3.12.15 defaults `gzip.compress(..., mtime=None)` to the current time. Calling the actual `build_progmem()` twice, 1.1 seconds apart over identical static inputs, produced different headers: `60a209f70b01783a7b2e041efaa89d4ab3a72968f0d866c81463e8ef9f8be69e` versus `2c3e582f856076ce35789f74adaf001448e8853a6e92e1617150d3f9922ab36a`; the first differing line was the gzip header bytes at line 9. The installed SvelteKit also defaults `kit.version.name` to `Date.now().toString()`, and the generator uses unsorted filesystem traversal. Successful regeneration does not imply reproducible bytes. No build-system determinism repair is claimed or included in this asset/documentation round.
+- Generated header SHA-256: `95f0226c40f0ecbd995f172938e59d8659d637b8c4003d8b88c0dd45ca050265`. A throwaway check decompressed all **85 assets** and compared each byte-for-byte with its freshly built static file, confirmed the fixed Home transcript focus link and negative-tabindex target, then found every compressed asset in the final firmware binary. The later final frontend build can change time-based version metadata without changing this committed header.
+
+### Final gates
+
+No tests, assertions, configuration, provider transport or production speech behavior were changed in this round. Only the requested final suites were rerun.
+
+| Command | Exit | Round-3 result |
+| --- | --- | --- |
+| `npm --prefix interface run check` | 0 | 0 errors / 0 warnings; separate `svelte-focus-trap` package metadata warning retained |
+| From `interface`: `node --test test/*.test.mjs` | 0 | 29 passed; 0 failed/cancelled/skipped/todo; no port-collision diagnostic |
+| `npm --prefix interface run build` | 0 | Static production site generated |
+| `CC=gcc CXX=g++ bash components/conversation_store/test/run.sh` | 0 | Checked FAT VFS; 1,000-turn archive/fault/crash/queue/heap coverage; 80-ID ledger regression with 79 exact cached results, conflict refusal and unknown-on-recovery |
+| `idf.py -D SDKCONFIG=sdkconfig.local -D SDKCONFIG_DEFAULTS=sdkconfig.defaults reconfigure` | 0 | App revision refreshed to `8fea697`; cached managed dependencies used |
+| `idf.py build` | 0 | Final firmware generated; size and SHA-256 above |
+
+EIM activation again returned **1** in the read-only sandbox, while `idf.py --version` reported **ESP-IDF v5.5.3** and firmware commands passed using the documented explicit Python function. No activation error text was emitted in the captured output. The registry reported `NOTICE: Cannot establish a connection to the component registry. Skipping checks of dependency changes.` inside the isolated build. Vendor LVGL mixed-enum deprecation and libc executable-stack warnings remain; none was suppressed.
+
+### Embedded-asset smoke and hygiene
+
+A temporary loopback HTTP server served gzip bytes parsed from the committed header, not the loose Vite build. Only synthetic `/rest/features` and logged-out `/rest/auth/status` responses were supplied; other REST/device actions were denied. A GET of the embedded Home JavaScript returned the fixed focus-link asset. Installed Google Chrome 153 headless rendered the actual embedded Home page: owner login required, device controls disabled, the device preview explicitly unavailable and “Read recent conversation” visible. Screenshot inspected locally; no physical-device, microphone, login or model operation occurred. This was not a new keyboard/screen-reader audit.
+
+The browser tool itself failed with `Shared browser daemon unavailable (broker start or Chromium launch failed); check omp ps for omp.browser.* daemons and /home/hanan/.omp/logs for details` (the original message wrapped `omp ps` in backticks). An explicit installed-browser attempt returned `Browser open timed out after 30000ms while launching or connecting to the browser (spawned:/usr/bin/google-chrome-stable)`. The headless retry returned `Failed to attach to google-chrome-stable on http://127.0.0.1:38047: Timed out waiting for CDP endpoint http://127.0.0.1:38047`. Direct headless Chrome screenshot capture succeeded instead. Temporary smoke server and screenshot/profile artifacts were removed after inspection.
+
+`sdkconfig.local` and the three pre-existing untracked files retained their starting SHA-256 fingerprints. They were not staged. The files are `Arvel Buddy — ESP32 Display.html`, `THIRD_PARTY_NOTICES.md` and `scripts/VOICECHAT_DEPLOYMENT.md`. Final commit/remote equality and push output are reported in the handoff; no repository visibility or settings operation is part of this round.
