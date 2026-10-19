@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import { createServer } from 'vite';
+import { createServer as createHttpServer } from 'node:http';
+
+// Vite 5 creates its WebSocket listener even with hmr:false. Own an
+// ephemeral loopback server so concurrent test files never share port 24678.
+const hmrServer = createHttpServer();
+await new Promise((resolve) => hmrServer.listen(0, '127.0.0.1', resolve));
 
 // Load the actual client validator and its normal aliases through Vite.
-const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' });
-after(() => server.close());
+const server = await createServer({ server: { middlewareMode: true, hmr: { server: hmrServer } }, appType: 'custom' });
+after(async () => {
+	await server.close();
+	await new Promise((resolve, reject) => hmrServer.close((error) => error ? reject(error) : resolve()));
+});
 const { isBuddySettings, validateSettingsPatch } = await server.ssrLoadModule('/src/lib/buddySettings.ts');
 const { isAgentSnapshot } = await server.ssrLoadModule('/src/lib/agent.ts');
 

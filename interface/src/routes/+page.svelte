@@ -344,6 +344,7 @@
 				<h2 id="conversation-heading" tabindex="-1">Conversation</h2>
 				<p class="card-sub">The native conversation on Arvel, shared with its physical screen. Text sends silently; device voice is controlled separately above.</p>
 			</div>
+			<a class="a-btn ghost" href="#conversation-history">Read recent conversation</a>
             <button class="a-btn ghost" onclick={resetConversation} disabled={!canControl || !snapshot || historyBusy}>{historyBusy ? 'Updating memory…' : 'New chat'}</button>
 		</header>
 		{#if connectionError}<div class="notice error" role="alert"><strong>{loginNeeded ? 'Sign in again.' : 'Connection needs attention.'}</strong> {connectionError} {#if loginNeeded}<a href="/login?returnTo=home">Log in to Arvel</a>{:else}<button type="button" class="inline-retry" onclick={() => void refresh()}>Retry connection</button> Check that Arvel is on your network and that the localhost proxy points to its address.{/if}</div>{/if}
@@ -351,7 +352,7 @@
 		{#if snapshot?.lastError}<div class="notice error" role="alert"><strong>Arvel reported an error.</strong> {snapshot.lastError} {#if snapshot.voicePhase === 'error'}Stop device voice above, <a href="/settings#speech-output">check the voice service settings</a>, then start device voice again when ready.{:else}<a href="/settings#chat-provider">Check the configured service settings</a> and the device’s connection before trying again.{/if}</div>{/if}
 		{#if snapshot && !snapshot.chatConfigured && snapshot.conversationMode === 'text_pipeline'}<div class="notice">The saved text profile needs an API key. <a href="/settings#chat-provider">Open Settings</a> to add it — never paste keys into the conversation.</div>{/if}
 		{#if snapshot && !snapshot.chatConfigured && snapshot.conversationMode === 'codex_live'}<div class="notice"><strong>Codex device tools need a chat backend.</strong> <a href="/settings#chat-provider">Configure the saved text profile</a> to use device actions and search through Codex delegations. Ordinary Codex conversation uses its saved account; this text profile does not require speech-to-text or change the live voice transport.</div>{/if}
-		<div class="history" bind:this={historyElement} role="log" aria-label="Recent conversation" aria-live="polite" aria-relevant="additions text" tabindex="0">
+		<div id="conversation-history" class="history" bind:this={historyElement} role="log" aria-label="Recent conversation" aria-live="polite" aria-relevant="additions text" tabindex="-1">
 			{#if !snapshot}
 				<div class="empty"><h3>{loading ? 'Connecting to Arvel…' : loginNeeded ? 'Your device, owner access.' : 'Arvel is out of reach.'}</h3><p>{loading ? 'Checking owner access, then reading the native device conversation.' : loginNeeded ? 'Log in to view the device state and use the native conversation. Your draft stays in this tab.' : 'Check the device connection or localhost proxy, then refresh. Your draft stays in this tab.'}</p>{#if loginNeeded}<a class="a-btn primary" href="/login?returnTo=home">Log in to Arvel</a>{/if}</div>
 			{:else if snapshot.messages.length === 0}
