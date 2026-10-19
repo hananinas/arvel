@@ -50,3 +50,13 @@ Initial sandbox mount ordering was incorrect: it produced `/dev/null: Permission
 The first browser smoke supplied HTTP 401 for the boot-time `/rest/features` request and hit `Error: Device information is unavailable. Check your connection and reload.` Supplying the correct isolated features response allowed the actual keyboard/scroll smoke to pass. This was a fixture setup error, not device evidence.
 
 Not executed: internet-dependent toolchain provisioning (`espup install`), the already-reported failing stock activation, interactive `menuconfig`, flashing/monitoring, real device login/proxy, providers or cloud deployment. Board-revision and flashing guidance is unchanged. Firmware compilation still emits vendor LVGL mixed-enum deprecation and libc `missing .note.GNU-stack section implies executable stack` warnings.
+
+## Greater-than-64 delegation ledger regression
+
+`components/codex_auth/test` covers account authorization, not delegation deduplication. `components/ai_chat_bsp/test` covers desk tools/settings without the durable ledger. The existing real-SQLite ledger fixture is `components/conversation_store/test/behavior.cpp`; one new scenario, `delegation_ledger_over_64`, runs there.
+
+It admits 80 distinct delegation `run_id`s and provider call IDs in one conversation/session, executes the real read-only `search_history` operation, commits 79 results and leaves the last read without terminal acknowledgment. After changing the searchable archive, it checks every completed ID still returns its exact original result rather than authorizing execution; conflicting arguments are rejected for all 80 IDs. It checks both before and after storage shutdown/reopen, including `inflight` becoming `unknown` for the unacknowledged read. This exercises the ledger admission boundary, not the complete Codex transport, model loop or C++ registered-tool callback.
+
+`CC=gcc CXX=g++ bash components/conversation_store/test/run.sh` exited **0**: checked FAT VFS, the existing 1,000-turn archive/fault/crash/queue/heap checks and the new 80-ID scenario passed. The default Nix compiler initially failed with `fatal error: 'openssl/sha.h' file not found` (exit 1); selecting installed system GCC/G++ resolved the host include-path mismatch without repository build changes.
+
+Production `speech_live.cpp` is unchanged: its `delegations[64][129]` array and `delegation_count == 64` admission check still fail at `delegation_limit` on a 65th distinct live delegation. That is a source-observed current limitation, not a live failure reproduced by this host regression. Passing the durable ledger at 80 IDs does **not** establish more than 64 delegations in a real Codex voice call. Removal remains deferred until a physical baseline exists.

@@ -141,6 +141,62 @@ void long_archive(const Config &config){
     require_ok(delete_conversation(uuid.c_str()),"delete 1000-turn conversation");
     assert(rows(search_history(q))==0);shutdown();
 }
+// This is the durable host path behind delegated read-only tools, not the
+// speech_live transport: its separate 64-ID admission ceiling is unchanged.
+void delegation_ledger_over_64(Config config,const std::string &base){
+    std::string path=base+"/delegations.sqlite3";config.path=path.c_str();
+    ready(config);const std::string uuid=create();
+    Message message{uuid.c_str(),"codex-host-session","seed","user","delegation host marker",false,{}};
+    assert(append_final_message(message).ok());
+    Query query;query.conversation=uuid.c_str();query.literal="delegation host marker";
+    std::vector<std::string> results;
+    auto identity=[&](const std::string &delegation,const std::string &call){
+        ToolIdentity id;id.conversation=uuid.c_str();id.provider_session="codex-host-session";
+        id.run_id=delegation.c_str();id.call_id=call.c_str();id.generation=7;
+        id.name="search_history";id.arguments_json=R"({"query":"delegation host marker"})";
+        return id;
+    };
+    for(unsigned n=0;n<80;++n){
+        const std::string delegation="delegation-"+std::to_string(n);
+        const std::string call=delegation+"/read";
+        auto id=identity(delegation,call);
+        auto admitted=begin_tool(id);assert(admitted.ok()&&admitted.decision==Decision::execute);
+        auto observed=search_history(query);assert(rows(observed)==1);
+        results.push_back(observed.json);
+        if(n==79){
+            // The read happened, but no terminal acknowledgment survived.
+            auto duplicate=begin_tool(id);assert(duplicate.ok()&&duplicate.decision==Decision::inflight);
+        }else{
+            auto terminal=finish_tool(id,Outcome::succeeded,observed.json.c_str());
+            assert(terminal.ok()&&terminal.outcome==Outcome::succeeded);
+        }
+    }
+    // A replayed search would now return different data. Cached results must
+    // remain byte-exact, including the earliest ID after crossing 64.
+    message.item_id="later";assert(append_final_message(message).ok());
+    assert(rows(search_history(query))==2);
+    for(unsigned recovery=0;recovery<2;++recovery){
+        if(recovery){shutdown();ready(config);}
+        for(unsigned n=0;n<80;++n){
+            const std::string delegation="delegation-"+std::to_string(n);
+            const std::string call=delegation+"/read";
+            auto id=identity(delegation,call);
+            auto duplicate=begin_tool(id);assert(duplicate.ok());
+            if(n==79){
+                assert(duplicate.decision==(recovery?Decision::unknown:Decision::inflight));
+                assert(duplicate.outcome==(recovery?Outcome::unknown:Outcome::running));
+            }else{
+                assert(duplicate.decision==Decision::reuse_completed);
+                assert(duplicate.outcome==Outcome::succeeded&&duplicate.json==results[n]);
+            }
+            id.arguments_json=R"({"query":"different request"})";
+            auto conflict=begin_tool(id);
+            assert(conflict.error==Error::conflict&&conflict.decision==Decision::conflict);
+        }
+    }
+    shutdown();
+    printf("delegation ledger host regression: 80 distinct read-only IDs, 79 exact cached results, conflicts refused, unfinished read unknown after recovery; speech_live 64-ID transport ceiling unchanged (not exercised)\n");
+}
 void faults(Config c,const std::string &base){
     for(Fault fault:{Fault::short_write,Fault::sync,Fault::full}){
         std::string p=base+"/fault-"+std::to_string(int(fault))+".sqlite3";c.path=p.c_str();ready(c);std::string uuid=create();
@@ -173,4 +229,4 @@ void crash_recovery(Config c,const std::string &base){
     pid_t child=fork();assert(child>=0);if(!child){ready(c);auto id=id_for(uuid,"power-loss-after-started");auto r=begin_tool(id);if(!r.ok()||r.decision!=Decision::execute)_exit(2);_exit(0);}
     int code;assert(waitpid(child,&code,0)==child);assert(WIFEXITED(code)&&WEXITSTATUS(code)==0);ready(c);auto id=id_for(uuid,"power-loss-after-started");auto r=begin_tool(id);assert(r.ok()&&r.decision==Decision::unknown);shutdown();
 }
-int main(){char directory[]="/tmp/arvel-store-XXXXXX";char *base=mkdtemp(directory);assert(base);std::string p=std::string(base)+"/history.sqlite3";Config c;c.path=p.c_str();c.mount_sd=false;c.free_reserve_bytes=0;long_archive(c);faults(c,base);crash_recovery(c,base);std::filesystem::remove_all(base);printf("conversation_store: 1000-turn archive, ledger, crash recovery, bounded queue/queries/heap and I/O failures passed\n");return 0;}
+int main(){char directory[]="/tmp/arvel-store-XXXXXX";char *base=mkdtemp(directory);assert(base);std::string p=std::string(base)+"/history.sqlite3";Config c;c.path=p.c_str();c.mount_sd=false;c.free_reserve_bytes=0;long_archive(c);faults(c,base);crash_recovery(c,base);delegation_ledger_over_64(c,base);std::filesystem::remove_all(base);printf("conversation_store: 1000-turn archive, ledger, crash recovery, bounded queue/queries/heap and I/O failures passed\n");return 0;}
