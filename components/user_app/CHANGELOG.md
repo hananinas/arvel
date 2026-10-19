@@ -1,5 +1,11 @@
 # Arvel firmware changelog
 
+## Submission host baseline — 2026-10-19
+
+- Updated the Codex authentication host transport fixture for the current `BoundedHttps` constructor, absolute-deadline cap and borrowed cancellation predicate. Production authentication and test assertions are unchanged.
+- The unchanged authentication suite now compiles and passes 37 scenarios plus 37 separate-process reload probes. A throwaway executable additionally exercised relative-timeout precedence, earlier absolute-deadline expiry and borrowed cancellation.
+- The local interface, runtime, buddy, web-auth and speech gates passed. ESP-IDF 5.5.3 built the application in 83.100 s at `0x510dc0` bytes, leaving `0xef240` bytes (15.569051%; IDF rounds to 16%) per 6 MiB slot. See the dated local baseline in `docs/arvel-hackathon-plan.md` for commands, artifact identity and environment limitations; no hardware/cloud acceptance is inferred.
+
 ## Codex-first app correctness — 2026-10-14
 
 - Applied the owner's current priority: Codex now, NVIDIA testing later. Retained the native adapter without automatic switching/deployment; the saved plan distinguishes future hackathon gates from current app work. No ASR adapter was added.

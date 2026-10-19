@@ -248,15 +248,22 @@ esp_err_t esp_crt_bundle_attach(void *) { return ESP_OK; }
 void esp_log_level_set(const char *tag, int level) {
     REQUIRE(!std::strcmp(tag, "HTTP_CLIENT") && level == ESP_LOG_WARN, "production disables token-bearing HTTP debug logs");
 }
-BoundedHttps::BoundedHttps(const std::atomic<bool> &cancelled, uint32_t timeout_ms)
-    : cancelled_(cancelled), deadline_(esp_timer_get_time() + int64_t(timeout_ms) * 1000) {}
+BoundedHttps::BoundedHttps(const std::atomic<bool> &cancelled, uint32_t timeout_ms,
+                         uint64_t deadline_us, bool (*cancelled_call)(void *), void *call_context)
+    : cancelled_(cancelled),
+      deadline_(deadline_us ? std::min<uint64_t>(deadline_us, esp_timer_get_time() + uint64_t(timeout_ms) * 1000)
+                            : esp_timer_get_time() + uint64_t(timeout_ms) * 1000),
+      cancelled_call_(cancelled_call), call_context_(call_context) {}
 BoundedHttps::~BoundedHttps() { delete wrapper_; }
-bool BoundedHttps::stopped() const { return cancelled_.load() || esp_timer_get_time() >= deadline_; }
+bool BoundedHttps::cancelled() const {
+    return cancelled_.load() || (cancelled_call_ && cancelled_call_(call_context_));
+}
+bool BoundedHttps::stopped() const { return cancelled() || esp_timer_get_time() >= deadline_; }
 int BoundedHttps::wait_ms() const {
     const int64_t remaining = deadline_ - esp_timer_get_time();
-    return cancelled_.load() || remaining <= 0 ? 0 : static_cast<int>(std::min<int64_t>(100, (remaining + 999) / 1000));
+    return cancelled() || remaining <= 0 ? 0 : static_cast<int>(std::min<int64_t>(100, (remaining + 999) / 1000));
 }
-const char *BoundedHttps::stop_reason() const { return cancelled_.load() ? "cancelled" : "deadline"; }
+const char *BoundedHttps::stop_reason() const { return cancelled() ? "cancelled" : "deadline"; }
 bool BoundedHttps::initialize(const char *url, std::string &error) {
     if (!url || std::strncmp(url, "https://auth.openai.com/", 24) || wall_seconds.load() < 1704067200 || stopped()) {
         error = "fixture transport rejected insecure or expired operation"; return false;
