@@ -8,7 +8,13 @@ Arvel
 
 ## Short tagline
 
-An ESP32 desk companion with owner-controlled tools and SD conversation history.
+A voice-first desk companion that keeps its memory and home controls with you.
+
+Alternates: "Your desk companion: local tools, owner-held memory, real home control." / "A desk companion that remembers you and acts with you at home." Pick before submitting; the tagline must name what the device actually does.
+
+## Built With
+
+**Nebius Token Factory** (conversation inference, OpenAI-compatible API) and **NVIDIA Nemotron** (the conversation model; exact model artifact to be named once the deployment is configured). Also: ESP-IDF 5.5.3, Waveshare ESP32-S3-Touch-LCD-3.49, Rust agent runtime (unravel-agent-runtime) over an in-process C ABI, SvelteKit owner web app compiled into firmware, SQLite on SD (conversation archive and durable tool ledger), MQTT over TLS (Niko Home Control II Hobby API), Tavily (search_web), Open-Meteo (weather), eSpeak-NG (local read-aloud).
 
 ## Description: features, functionality and architecture
 
@@ -127,3 +133,13 @@ Use an isolated demonstration network, synthetic/non-private conversation histor
 If cloud inference is established, provide dedicated restricted project credentials through a private channel, never household credentials or personal provider accounts. Restrict them to the demonstration deployment and required judging capabilities; keep internal Triton ports private. The owner must fund and authorize the necessary availability, with monitored spend limits and an agreed testing schedule that still satisfies judging access. Resolve any availability/cost conflict before submission rather than claiming an unfunded always-on service.
 
 Keep Stop/microphone control, action confirmation and the empty-by-default allowlist intact. Revoke temporary accounts/tokens, stop/delete authorized cloud resources and remove demonstration data after the window. No judging account, deployment or organizer arrangement has been established by this draft.
+
+## Pre-submission checklist (owner actions)
+
+1. Rotate the OpenRouter credential previously committed to git history (README security note) before the repository becomes public; confirm no live key material exists in tracked files (scan passed at HEAD on 2026-10-19) and never commit the Token Factory key.
+2. Decide repository publication and resolve THIRD_PARTY_NOTICES rights questions (Espressif, NVIDIA public-demo/judging permissions, artwork); commit the currently untracked notices and deployment documents once cleared.
+3. Configure the Nebius Token Factory deployment with a Nemotron model and replace the [TBD] inference placeholder in this form, SUBMISSION.md and the storyboard.
+4. Fill the final Built With model artifact name; confirm the project name and tagline.
+5. Film the 2:50 storyboard; speak the stack sentence aloud and show the model identity on screen (organizer tip: name Token Factory and the NVIDIA model with audio, not only text); upload to YouTube as public.
+6. Decide the demo URL field (Physical AI exemption) and confirm judging access for December 1 to 15.
+7. Submit several days before the October 30 deadline; submissions remain editable until then.
