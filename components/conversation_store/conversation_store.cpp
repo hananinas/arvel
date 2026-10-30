@@ -191,7 +191,15 @@ bool cancelled() {
     return current && ((current->control.deadline_us && now_us() >= current->control.deadline_us) ||
         (current->control.cancelled && current->control.cancelled(current->control.context)));
 }
-int progress(void *) { return cancelled() ? 1 : 0; }
+int progress(void *) {
+#ifndef CONVERSATION_STORE_HOST
+    // This worker shares the live-voice priority; yield periodically so long
+    // archive work cannot starve LVGL or the idle task (task watchdog).
+    static uint64_t yielded = 0;
+    if (now_us() - yielded > 100000) { vTaskDelay(1); yielded = now_us(); }
+#endif
+    return cancelled() ? 1 : 0;
+}
 void state(State value, int code = 0) {
     std::lock_guard<std::mutex> lock(gate); snapshot.state=value; snapshot.sqlite_code=code;
 }
@@ -317,7 +325,15 @@ Result checkpoint(const Checkpoint &c) {
         // Only whitelisted public fields are materialized. Never serialize the Session or its reasoning/images.
         char item[64];snprintf(item,sizeof(item),"text:%llu",static_cast<unsigned long long>(c.offset+index));
         Message value{c.uuid,c.session,item,role,text.c_str(),false,{}};
-        if(!strcmp(role,"tool")||!strcmp(role,"tool_unknown")){value.call_id=str(m,"call_id");value.tool_name=str(m,"name");value.is_error=cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(m,"is_error"));}
+        const bool tool=!strcmp(role,"tool")||!strcmp(role,"tool_unknown");
+        if(tool){value.call_id=str(m,"call_id");value.tool_name=str(m,"name");value.is_error=cJSON_IsTrue(cJSON_GetObjectItemCaseSensitive(m,"is_error"));}
+        // Every checkpoint resends the whole session window. Rows archived by an
+        // earlier committed checkpoint are skipped: rewriting them only adds
+        // journaled, fsynced SD writes that grow with the conversation.
+        Statement same("SELECT 1 FROM messages WHERE conversation=? AND session=? AND item=? AND role=? AND text=? AND interrupted=0 AND call_id IS ? AND tool_name IS ? AND is_error=?");
+        same.text(1,c.uuid);same.text(2,c.session);same.text(3,item);same.text(4,role);same.text(5,text.c_str());
+        same.text(6,tool?value.call_id:nullptr);same.text(7,tool?value.tool_name:nullptr);same.number(8,tool&&value.is_error);
+        const int archived=same.step();if(archived==SQLITE_ROW)continue;if(archived!=SQLITE_DONE)return sql_error(archived);
         Result r=write_message(value);if(!r.ok())return r;
         cJSON *calls=cJSON_GetObjectItemCaseSensitive(m,"tool_calls");
         if(calls) {
@@ -771,6 +787,9 @@ void run_worker() {
         current=r;r->result=rc==SQLITE_OK?dispatch(*r):error(Error::unavailable,rc);current=nullptr;
         const auto bytes=db_size();const auto used=rc==SQLITE_OK?sqlite3_memory_used():0;const auto high=rc==SQLITE_OK?sqlite3_memory_highwater(0):0;
         {std::lock_guard<std::mutex>lock(gate);snapshot.sqlite_bytes=used;snapshot.sqlite_highwater=high;snapshot.database_bytes=bytes;r->done=true;r->completed.notify_one();}
+#ifndef CONVERSATION_STORE_HOST
+        vTaskDelay(1); // Back-to-back requests must not starve the idle task between progress yields.
+#endif
     }
     if(db){int closed=sqlite3_close(db);if(closed!=SQLITE_OK)state(State::error,closed);db=nullptr;}
     sqlite3_shutdown();std::free(heap);heap=nullptr;
@@ -797,7 +816,8 @@ Error start_async(const Config &c){
 #ifdef CONVERSATION_STORE_HOST
     worker=std::thread(run_worker);
 #else
-    if(xTaskCreate([](void *){run_worker();},"conversation_sd",12288,nullptr,3,&worker)!=pdPASS){started=false;exited=true;snapshot.state=State::error;return Error::unavailable;}
+    // Same priority as the live-voice tasks: callers at priority 5 block on this worker.
+    if(xTaskCreate([](void *){run_worker();},"conversation_sd",12288,nullptr,5,&worker)!=pdPASS){started=false;exited=true;snapshot.state=State::error;return Error::unavailable;}
 #endif
     return Error::none;
 }

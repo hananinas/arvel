@@ -33,21 +33,10 @@ struct BuddyLiveDeployment {
     std::string api_key;
 };
 
-struct BuddyNikoProfile {
-    bool enabled = false;
-    std::string controller;
-    std::string username;
-    std::string jwt;
-    std::string ca_pem;
-    std::string tls_server_name;
-    std::vector<std::string> allowed_lights;
-};
-
 struct BuddySettings {
     std::string chat_provider = "ollama";
     std::string conversation_mode = "text_pipeline";
     BuddyLiveDeployment live;
-    BuddyNikoProfile niko;
     std::string chat_endpoint;
     std::string chat_model;
     std::string chat_api_key;

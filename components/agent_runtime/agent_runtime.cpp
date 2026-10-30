@@ -183,6 +183,7 @@ ToolResult Agent::execute_tool(const char *name, const char *arguments, const To
     if (before_) {
         const ToolDecision decision = before_(name, encoded, call, result, policy_context_);
         if (decision != ToolDecision::execute) {
+            result.reused = decision == ToolDecision::reuse;
             if (decision == ToolDecision::refuse && result.state == ToolState::succeeded) result.state = ToolState::failed;
             if (observer_) observer_(name, encoded, call, result, observer_context_);
             return result;
@@ -364,6 +365,14 @@ RunResult Agent::run(const char *prompt, const char *model, const char *system_p
             cJSON_AddItemToObject(definition, "parameters", schema);
             cJSON_AddItemToArray(tools, definition);
         }
+        cJSON *read_only = cJSON_AddArrayToObject(params, "read_only_tools");
+        if (!read_only) { result.error = "Unable to allocate tool definitions"; return result; }
+        for (const Tool &tool : tools_)
+            if (tool.read_only) cJSON_AddItemToArray(read_only, cJSON_CreateString(tool.name.c_str()));
+        cJSON *parallel = cJSON_AddArrayToObject(params, "parallel_tools");
+        if (!parallel) { result.error = "Unable to allocate tool definitions"; return result; }
+        for (const Tool &tool : tools_)
+            if (tool.parallel_safe) cJSON_AddItemToArray(parallel, cJSON_CreateString(tool.name.c_str()));
     }
     char *encoded = cJSON_PrintUnformatted(request.get());
     if (!encoded) {

@@ -354,42 +354,40 @@ export async function fetchNativeReadiness(signal?: AbortSignal) {
     return v;
 }
 
-export interface NikoProperty { name: string; value: string; definition: string; hasStatus: boolean; canControl: boolean; observedMonotonicUs: number }
-export interface NikoDevice {
-    id: string; name: string; type: string; technology: string; model: string; locationId: string; locationName: string;
-    online: boolean; safeLightingClass: boolean; properties: NikoProperty[];
+
+export interface DeskNote { id: number; kind: 'note' | 'task'; text: string; dueDate: string; completed: boolean }
+export interface DeskTimer {
+    status: 'running' | 'paused' | 'done'; phase: 'timer' | 'focus' | 'break'; pomodoro: boolean;
+    round: number; rounds: number; remainingSeconds: number; durationSeconds: number; label: string;
 }
-export interface NikoSnapshot {
-    status: {
-        enabled: boolean; configured: boolean; authenticated: boolean; connected: boolean; inventoryReady: boolean; stale: boolean;
-        exercised: boolean; lastObservedMonotonicUs: number; deviceCount: number; allowlistCount: number; writeScope: string;
-        tokenExpiresUtcSeconds: number; tokenExpired: boolean; error: string;
-    };
-    inventory: { ok: boolean; stale: boolean; error: string; devices: NikoDevice[]; nextCursor: number | null; inventoryRevision: number };
+export interface DeskForecastHour { time: number; temperatureC: number; precipitationProbability: number; weatherCode: number }
+export interface DeskWeather {
+    location: string; condition: string; weatherCode: number; temperatureC: number; feelsLikeC: number;
+    highC: number; lowC: number; windKmh: number; fetchedAt: number; utcOffsetSeconds: number; forecast: DeskForecastHour[];
 }
-export interface NikoControlArgs { device_id: string; status?: 'On' | 'Off'; brightness?: number }
-export async function fetchNiko(after = 0, count = 20, signal?: AbortSignal): Promise<NikoSnapshot> {
-    const v = await ownerRequest<unknown>(`/rest/device/niko?${queryString({after,count})}`,{signal});
-    if (!object(v) || !hasOnly(v,['status','inventory']) || !object(v.status) || !object(v.inventory)) throw new Error('Unreadable Niko snapshot.');
-    const s = v.status, i = v.inventory;
-    if (!hasOnly(s,['enabled','configured','authenticated','connected','inventoryReady','stale','exercised','lastObservedMonotonicUs','deviceCount','allowlistCount','writeScope','tokenExpiresUtcSeconds','tokenExpired','error']) ||
-        !['enabled','configured','authenticated','connected','inventoryReady','stale','tokenExpired'].every((k) => typeof s[k] === 'boolean') ||
-        typeof s.exercised !== 'boolean' || !fieldsText(s,['writeScope','error']) ||
-        !['lastObservedMonotonicUs','deviceCount','allowlistCount','tokenExpiresUtcSeconds'].every((k) => integer(s[k])) ||
-        !hasOnly(i,['ok','stale','error','devices','nextCursor','inventoryRevision']) || typeof i.ok !== 'boolean' || typeof i.stale !== 'boolean' ||
-        !text(i.error) || !(i.nextCursor === null || integer(i.nextCursor) && i.nextCursor > after) || !integer(i.inventoryRevision) ||
-        !Array.isArray(i.devices) || i.devices.length > count || !i.devices.every((d) => object(d) &&
-            hasOnly(d,['id','name','type','technology','model','locationId','locationName','online','safeLightingClass','properties']) &&
-            fieldsText(d,['id','name','type','technology','model','locationId','locationName']) && typeof d.online === 'boolean' &&
-            typeof d.safeLightingClass === 'boolean' && Array.isArray(d.properties) && d.properties.length <= 16 &&
-            d.properties.every((p) => object(p) && hasOnly(p,['name','value','definition','hasStatus','canControl','observedMonotonicUs']) &&
-                fieldsText(p,['name','value','definition']) && typeof p.hasStatus === 'boolean' && typeof p.canControl === 'boolean' && integer(p.observedMonotonicUs))))
-        throw new Error('The device returned an unreadable Niko status or inventory page.');
-    return v as unknown as NikoSnapshot;
+export interface DeskSnapshot { notesReady: boolean; notes: DeskNote[]; timer: DeskTimer | null; weather: DeskWeather | null }
+const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+function isDeskTimer(t: unknown): t is DeskTimer {
+    return object(t) && hasOnly(t,['status','phase','pomodoro','round','rounds','remainingSeconds','durationSeconds','label']) &&
+        ['running','paused','done'].includes(t.status as string) && ['timer','focus','break'].includes(t.phase as string) &&
+        typeof t.pomodoro === 'boolean' && ['round','rounds','remainingSeconds','durationSeconds'].every((k) => integer(t[k])) && text(t.label);
 }
-export async function submitNikoControl(args: NikoControlArgs, signal?: AbortSignal) {
-    if (!uuidPattern.test(args.device_id) || !hasOnly(args as unknown as Obj,['device_id','status','brightness']) ||
-        args.status === undefined && args.brightness === undefined || args.status !== undefined && !['On','Off'].includes(args.status) ||
-        args.brightness !== undefined && (!integer(args.brightness) || args.brightness > 100)) throw new Error('Choose one discovered light and valid absolute desired properties.');
-    return ownerRequest<{accepted:true}>('/rest/device/niko/control',{method:'POST',body:JSON.stringify(args),signal});
+function isDeskWeather(w: unknown): w is DeskWeather {
+    return object(w) && hasOnly(w,['location','condition','weatherCode','temperatureC','feelsLikeC','highC','lowC','windKmh','fetchedAt','utcOffsetSeconds','forecast']) &&
+        fieldsText(w,['location','condition']) &&
+        ['weatherCode','temperatureC','feelsLikeC','highC','lowC','windKmh','fetchedAt','utcOffsetSeconds'].every((k) => finite(w[k])) &&
+        Array.isArray(w.forecast) && w.forecast.length <= 4 && w.forecast.every((h) => object(h) &&
+            hasOnly(h,['time','temperatureC','precipitationProbability','weatherCode']) &&
+            ['time','temperatureC','precipitationProbability','weatherCode'].every((k) => finite(h[k])));
+}
+/** Read-only notes/tasks, timer and cached weather. Changes go through Arvel's own tools. */
+export async function fetchDesk(signal?: AbortSignal): Promise<DeskSnapshot> {
+    const v = await ownerRequest<unknown>('/rest/device/desk', { signal });
+    if (!object(v) || !hasOnly(v,['notesReady','notes','timer','weather']) || typeof v.notesReady !== 'boolean' ||
+        !Array.isArray(v.notes) || v.notes.length > 24 || !v.notes.every((n) => object(n) &&
+            hasOnly(n,['id','kind','text','dueDate','completed']) && integer(n.id) && (n.kind === 'note' || n.kind === 'task') &&
+            text(n.text) && text(n.dueDate) && (n.dueDate === '' || /^\d{4}-\d{2}-\d{2}$/.test(n.dueDate)) && typeof n.completed === 'boolean') ||
+        !(v.timer === null || isDeskTimer(v.timer)) || !(v.weather === null || isDeskWeather(v.weather)))
+        throw new Error('The device returned unreadable desk state.');
+    return v as unknown as DeskSnapshot;
 }

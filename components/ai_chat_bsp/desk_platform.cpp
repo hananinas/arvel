@@ -57,6 +57,7 @@ bool http(const char *url, const char *key, const char *body, size_t limit, uint
     if ((tavily || parallel) != (key && *key) || timeout > 8000 || !timeout) { error = "invalid_remote_configuration"; return false; }
     BoundedHttps transport(*cancel, timeout, call ? call->deadline_us : 0,
                            call_cancelled, const_cast<unravel::ToolCallContext *>(call));
+    const int64_t started = monotonic();
     if (!transport.initialize(url, error)) return false;
     esp_http_client_config_t config{};
     config.url = url; config.timeout_ms = transport.wait_ms(); config.is_async = true;
@@ -76,7 +77,10 @@ bool http(const char *url, const char *key, const char *body, size_t limit, uint
     const size_t length = body ? std::strlen(body) : 0;
     esp_err_t result;
     do {
-        if (transport.stopped()) { error = transport.stop_reason(); return false; }
+        if (transport.stopped()) {
+            ESP_LOGW("desk_http", "%.40s stopped while connecting after %lld ms", url, static_cast<long long>((monotonic()-started)/1000));
+            error = transport.stop_reason(); return false;
+        }
         esp_http_client_set_timeout_ms(client.handle, transport.wait_ms());
         result = esp_http_client_open(client.handle, length);
         if (result == ESP_ERR_HTTP_EAGAIN) vTaskDelay(pdMS_TO_TICKS(10));
@@ -113,8 +117,13 @@ bool http(const char *url, const char *key, const char *body, size_t limit, uint
         }
         received += count;
     }
+    const bool complete = esp_http_client_is_complete_data_received(client.handle);
+    if (transport.stopped() || result != ESP_OK || received > limit || !complete)
+        ESP_LOGW("desk_http", "%.40s failed after %lld ms: result=%d status=%d length=%lld received=%u complete=%d stopped=%d",
+                 url, static_cast<long long>((monotonic()-started)/1000), result, status,
+                 static_cast<long long>(content_length), static_cast<unsigned>(received), complete, transport.stopped());
     if (transport.stopped()) { error = transport.stop_reason(); return false; }
-    if (result != ESP_OK || received > limit || !esp_http_client_is_complete_data_received(client.handle)) {
+    if (result != ESP_OK || received > limit || !complete) {
         error = "remote_response_incomplete_or_too_large"; return false;
     }
     response.assign(buffer.get(), received); return true;

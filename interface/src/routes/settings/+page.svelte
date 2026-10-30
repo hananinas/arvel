@@ -4,7 +4,7 @@
 		getBuddySettings, saveBuddySettings, validateSettingsPatch, utf8Bytes,
 		BuddySettingsRequestError, type BuddySettings, type BuddySettingsPatch,
 		codexVoices, type TtsSettings, type TtsPatch, type ProviderPatch, type SearchSettings, type SearchPatch, type SettingsIssue,
-		type ConversationMode, type LivePatch, type NikoSettings, type NikoPatch
+		type ConversationMode, type LivePatch
 	} from '$lib/buddySettings';
 	import { arvelScenes } from '$lib/arvelScenes';
 	import { PreferenceSaver } from '$lib/preferenceSaver.svelte';
@@ -15,7 +15,7 @@
 	import CodexConnect from '$lib/components/CodexConnect.svelte';
 	import ModelPicker from '$lib/components/ModelPicker.svelte';
 	import type { CatalogSelection } from '$lib/modelCatalog';
-	import { deviceRequest, isAgentSnapshot, fetchNiko, submitNikoControl, type AgentSnapshot } from '$lib/agent';
+	import { deviceRequest, isAgentSnapshot, type AgentSnapshot } from '$lib/agent';
 
 	type ProviderDraft = { endpoint: string; model: string; apiKey: string; clearApiKey: boolean };
 	type ProfileDraft = { name: string; userName: string; instructions: string };
@@ -38,19 +38,11 @@
 		tavily: { apiKey: '', clearApiKey: false }, parallel: { apiKey: '', clearApiKey: false }
 	});
 	let profile = $state<ProfileDraft>({ name: '', userName: '', instructions: '' });
-	type NikoDraft = Pick<NikoSettings, 'enabled' | 'controller' | 'tlsServerName' | 'allowedLights'> &
-		{ username: string; jwt: string; caPem: string; clearCredentials: boolean };
-	let niko = $state<NikoDraft>({ enabled: false, controller: '', tlsServerName: '', allowedLights: [], username: '', jwt: '', caPem: '', clearCredentials: false });
 	let runtime = $state<AgentSnapshot | null>(null);
 	let statusError = $state('');
 	let statusPending = $state(false);
 	let ownerOperation = $state(false);
 	let statusController: AbortController | null = null;
-	let nikoData = $state<Awaited<ReturnType<typeof fetchNiko>> | null>(null);
-	let nikoPending = $state(false);
-	let nikoError = $state('');
-	let nikoController: AbortController | null = null;
-	let nikoRevision = 0;
 	let pending = $state<'load' | 'status' | 'save' | null>(null);
 	let error = $state('');
 	let issues = $state<SettingsIssue[]>([]);
@@ -81,15 +73,11 @@
 		conversationMode !== saved.conversationMode || chatProvider !== saved.chat.provider ||
 		live.provider !== saved.live.provider || live.model !== saved.live.model || live.protocol !== saved.live.protocol ||
 		live.endpoint !== saved.live.endpoint || live.apiKey !== '' || live.clearApiKey ||
-		niko.enabled !== saved.niko.enabled || niko.controller !== saved.niko.controller || niko.tlsServerName !== saved.niko.tlsServerName ||
-		JSON.stringify(niko.allowedLights) !== JSON.stringify(saved.niko.allowedLights) ||
-		niko.username !== '' || niko.jwt !== '' || niko.caPem !== '' || niko.clearCredentials ||
 		search.provider !== saved.search.provider || search.enabled !== saved.search.enabled ||
 		searchProviders.some((provider) => searchKeys[provider.id].apiKey !== '' || searchKeys[provider.id].clearApiKey) ||
 		profile.name !== saved.buddy.name || profile.instructions !== saved.buddy.instructions || profile.userName !== saved.preferences.userName));
 
 	function replaceDraft(settings: BuddySettings) {
-		nikoController?.abort(); nikoRevision++; nikoPending = false;
 		for (const group of groups) {
 			providers[group] = { endpoint: settings[group].endpoint, model: settings[group].model, apiKey: '', clearApiKey: false };
 		}
@@ -97,9 +85,6 @@
 		conversationMode = settings.conversationMode;
 		chatProvider = settings.chat.provider;
 		live = { provider: settings.live.provider, model: settings.live.model, protocol: settings.live.protocol, endpoint: settings.live.endpoint, apiKey: '', clearApiKey: false };
-		niko = { enabled: settings.niko.enabled, controller: settings.niko.controller, tlsServerName: settings.niko.tlsServerName,
-			allowedLights: [...settings.niko.allowedLights], username: '', jwt: '', caPem: '', clearCredentials: false };
-		nikoData = null;
 		search = { provider: settings.search.provider, enabled: settings.search.enabled };
 		for (const provider of searchProviders) searchKeys[provider.id] = { apiKey: '', clearApiKey: false };
 		profile = { name: settings.buddy.name, userName: settings.preferences.userName, instructions: settings.buddy.instructions };
@@ -140,15 +125,6 @@
 			if (draft.clearApiKey) web[provider.clear] = true;
 		}
 		if (Object.keys(web).length) patch.search = web;
-		const home: NikoPatch = {};
-		for (const field of ['enabled', 'controller', 'tlsServerName'] as const) {
-			if (niko[field] !== saved.niko[field]) Object.assign(home, { [field]: niko[field] });
-		}
-		if (JSON.stringify(niko.allowedLights) !== JSON.stringify(saved.niko.allowedLights)) home.allowedLights = [...niko.allowedLights];
-		for (const field of ['username', 'jwt', 'caPem'] as const) {
-			if (niko.clearCredentials || niko[field] !== '') home[field] = niko.clearCredentials ? '' : niko[field];
-		}
-		if (Object.keys(home).length) patch.niko = home;
 		const changes: Partial<BuddySettings['buddy']> = {};
 		if (profile.name !== saved.buddy.name) changes.name = profile.name;
 		if (profile.instructions !== saved.buddy.instructions) changes.instructions = profile.instructions;
@@ -166,7 +142,6 @@
 		for (const group of groups) providers[group].apiKey = '';
 		for (const provider of searchProviders) searchKeys[provider.id].apiKey = '';
 		live.apiKey = '';
-		niko.username = ''; niko.jwt = ''; niko.caPem = '';
 	}
 
 	function lockSettings() {
@@ -177,7 +152,6 @@
 		controller = null;
 		statusController?.abort(); statusController = null;
 		runtime = null; statusError = ''; statusPending = false; ownerOperation = false;
-		nikoController?.abort(); nikoController = null; nikoData = null; nikoError = ''; nikoPending = false;
 		pending = null;
 		clearSecrets();
 		saver.pause();
@@ -229,14 +203,6 @@
 				}
 				if (search.provider === saved.search.provider) search.provider = settings.search.provider;
 				if (search.enabled === saved.search.enabled) search.enabled = settings.search.enabled;
-				const unchangedFixtures = JSON.stringify(niko.allowedLights) === JSON.stringify(saved.niko.allowedLights);
-				const incomingControllerHop = (niko.controller === saved.niko.controller && niko.controller !== settings.niko.controller) ||
-					(niko.tlsServerName === saved.niko.tlsServerName && niko.tlsServerName !== settings.niko.tlsServerName);
-				if (incomingControllerHop) changeNikoController();
-				for (const field of ['enabled', 'controller', 'tlsServerName'] as const) {
-					if (niko[field] === saved.niko[field]) niko = { ...niko, [field]: settings.niko[field] };
-				}
-				if (unchangedFixtures) niko.allowedLights = [...settings.niko.allowedLights];
 				if (profile.name === saved.buddy.name) profile.name = settings.buddy.name;
 				if (profile.instructions === saved.buddy.instructions) profile.instructions = settings.buddy.instructions;
 				if (profile.userName === saved.preferences.userName) profile.userName = settings.preferences.userName;
@@ -298,8 +264,6 @@
 			}
 			if (generation === accessGeneration) live.apiKey = '';
 			if (patch.live) delete patch.live.apiKey;
-			if (generation === accessGeneration) { niko.username = ''; niko.jwt = ''; niko.caPem = ''; }
-			if (patch.niko) { delete patch.niko.username; delete patch.niko.jwt; delete patch.niko.caPem; }
 			for (const provider of searchProviders) {
 				if (generation === accessGeneration) searchKeys[provider.id].apiKey = '';
 				if (patch.search) delete patch.search[provider.key];
@@ -385,70 +349,6 @@
 		}
 	}
 
-	function changeNikoController() {
-		nikoController?.abort(); nikoRevision++; nikoPending = false;
-		niko.username = ''; niko.jwt = ''; niko.caPem = ''; niko.clearCredentials = false;
-		niko.allowedLights = [];
-		nikoData = null;
-	}
-
-	function fixtureWritable(device: NonNullable<typeof nikoData>['inventory']['devices'][number]) {
-		return device.safeLightingClass && device.properties.some(property =>
-			property.name === 'Status' && property.hasStatus && property.canControl &&
-			(property.definition === 'Choice(On,Off)' || property.definition === 'Choice(On, Off)'));
-	}
-
-	function enableFixture(id: string, enabled: boolean) {
-		if (enabled) {
-			if (!niko.allowedLights.includes(id) && niko.allowedLights.length < 16) niko.allowedLights = [...niko.allowedLights, id];
-		} else niko.allowedLights = niko.allowedLights.filter(value => value !== id);
-	}
-
-	async function loadNiko(after = 0) {
-		if (!authenticated || !saved?.niko.enabled || nikoPending || niko.controller !== saved.niko.controller ||
-			niko.tlsServerName !== saved.niko.tlsServerName) return;
-		nikoPending = true; nikoError = '';
-		nikoController = new AbortController();
-		const generation = accessGeneration;
-		const revision = nikoRevision;
-		const expectedController = saved.niko.controller, expectedIdentity = saved.niko.tlsServerName;
-		try {
-			const value = await fetchNiko(after, 20, nikoController.signal);
-			if (mounted && authenticated && generation === accessGeneration && revision === nikoRevision &&
-				niko.controller === expectedController && niko.tlsServerName === expectedIdentity &&
-				saved?.niko.controller === expectedController && saved?.niko.tlsServerName === expectedIdentity) nikoData = value;
-		} catch {
-			if (mounted && authenticated && generation === accessGeneration && revision === nikoRevision)
-				nikoError = 'Niko status or inventory unavailable. Previous observations are not current. Check the saved profile and refresh.';
-		} finally {
-			if (generation === accessGeneration && revision === nikoRevision) { nikoPending = false; nikoController = null; }
-		}
-	}
-
-	async function controlFixture(id: string, status: 'On' | 'Off') {
-		const device = nikoData?.inventory.devices.find(value => value.id === id);
-		if (!device || !fixtureWritable(device) || dirty || ownerOperation || nikoPending || !saved?.niko.enabled ||
-			!saved.niko.allowedLights.includes(id) || !runtime?.storage.durable || runtime.busy ||
-			!nikoData?.status.connected || nikoData.status.stale || nikoData.inventory.stale || !!nikoError) return;
-		if (!window.confirm(`Request ${status} for “${device.name}”? Arvel will report the controller observation; that is not physical proof.`)) return;
-		ownerOperation = true; nikoError = '';
-		nikoController = new AbortController();
-		const generation = accessGeneration;
-		try {
-			await submitNikoControl({ device_id: id, status }, nikoController.signal);
-			if (mounted && authenticated && generation === accessGeneration) {
-				nikoData = null;
-				notice = `Niko ${status} request accepted for the shared tool worker. Inspect its actual outcome on Home; acceptance is not success. Do not retry an uncertain action.`;
-			}
-		} catch {
-			if (mounted && authenticated && generation === accessGeneration)
-				nikoError = 'The control request could not be confirmed. Inspect the Home tool outcome and refresh controller state before considering another request.';
-		} finally {
-			if (generation === accessGeneration) { ownerOperation = false; nikoController = null; void refreshRuntime(); }
-		}
-	}
-
-
 	function invalid(field: string) {
 		return issues.some((issue) => issue.field === field);
 	}
@@ -461,7 +361,6 @@
 			saver.pause();
 			controller?.abort();
 			statusController?.abort();
-			nikoController?.abort();
 			clearSecrets();
 		};
 	});
@@ -673,6 +572,7 @@
 					<p id="chat-provider-id-help" class="hint">Provider-scoped model identity; up to 64 UTF-8 bytes. Custom endpoints use the implemented OpenAI-compatible text adapter, not a provider SDK.</p>
 				</div>
 				<div class="presets" aria-label="Chat endpoint presets">
+					<button class="a-btn ghost" type="button" onclick={() => usePreset('chat', 'https://api.tokenfactory.us-north1.nebius.com/v1/chat/completions', 'deepseek-ai/DeepSeek-V4.1-Flash', 'nebius')}>Nebius · DeepSeek V4.1 Flash</button>
 					<button class="a-btn ghost" type="button" onclick={() => usePreset('chat', 'https://ollama.com/v1/chat/completions', 'glm-5.3', 'ollama')}>Ollama · glm-5.3</button>
 					<button class="a-btn ghost" type="button" onclick={() => usePreset('chat', 'https://api.openai.com/v1/chat/completions', 'gpt-4.1-mini', 'openai')}>OpenAI · gpt-4.1-mini</button>
 				</div>
@@ -730,91 +630,13 @@
 				<p class="lead small">Finalized conversation and tool evidence live on your SD card, not in an archive-sized model request. No raw microphone or generated audio is archived by default.</p>
 				<p role="status"><strong>Storage:</strong> {runtime?.storage.state ?? 'Not observed'} · {runtime?.storage.durable ? 'durable archive available' : 'new persistence not confirmed'}</p>
 				{#if runtime}<p class="hint">Database {runtime.storage.databaseBytes.toLocaleString()} bytes. SQLite allocation {runtime.storage.sqliteBytes.toLocaleString()} bytes (high-water {runtime.storage.sqliteHighwater.toLocaleString()}).</p>{/if}
-				<p class="hint">Missing, full, removed or read-only storage does not trigger formatting. Niko writes require the durable ledger; an unavailable archive cannot promise persistence.</p>
+				<p class="hint">Missing, full, removed or read-only storage does not trigger formatting. An unavailable archive cannot promise persistence.</p>
 				<div class="actions">
 					<a class="a-btn ghost" href="/#history">Inspect, export or delete history</a>
 					<button type="button" class="a-btn ghost" disabled={statusPending || ownerOperation} onclick={refreshRuntime}>Refresh storage status</button>
 				</div>
 				<p class="hint lan"><strong>Privacy boundary:</strong> history is local but SD and NVS are not encrypted. The configured cloud model receives selected audio and context. LAN HTTP does not encrypt owner requests. This is not end-to-end encrypted storage. Deletion is logical, not guaranteed secure erasure on a wear-levelled card.</p>
 			</section>
-
-			<fieldset class="panel-card section" id="niko-setup" disabled={!!pending || ownerOperation}>
-				<legend class="section-title">Niko Home Control II · direct connection</legend>
-				<p class="lead small">Activate Hobby API in Niko programming software, then supply its username, annual-expiry token and CA. Arvel connects directly using verified MQTT TLS on fixed port 8884. No Home Assistant or PC bridge is required.</p>
-				<p class="hint"><a href="https://guide.niko.eu/en/connhc2/lv/hobby-api" target="_blank" rel="noopener noreferrer">Niko Hobby API setup (opens a new tab)</a>. Saving an enabled profile permits read-only discovery, never an automatic lighting command.</p>
-				<label class="check" for="niko-enabled"><input id="niko-enabled" type="checkbox" bind:checked={niko.enabled} aria-invalid={invalid('niko-enabled')} /><span>Enable Niko connection and read-only discovery</span></label>
-				<div class="two">
-					<div class="field">
-						<label for="niko-controller">Controller DNS name or IPv4 address</label>
-						<input id="niko-controller" bind:value={niko.controller} oninput={changeNikoController} aria-invalid={invalid('niko-controller')} aria-describedby="niko-controller-help" autocomplete="off" autocapitalize="off" spellcheck="false" />
-						<p id="niko-controller-help" class="hint">Up to 253 bytes, no URL or port. Changing controller or TLS identity clears entered credentials and the draft fixture allowlist.</p>
-					</div>
-					<div class="field">
-						<label for="niko-tlsServerName">Expected certificate DNS name or IPv4 identity</label>
-						<input id="niko-tlsServerName" bind:value={niko.tlsServerName} oninput={changeNikoController} aria-invalid={invalid('niko-tlsServerName')} aria-describedby="niko-tls-help" autocomplete="off" autocapitalize="off" spellcheck="false" />
-						<p id="niko-tls-help" class="hint">Must match the controller certificate. This is an identity check, not a way to disable validation. No IPv6 in this adapter.</p>
-					</div>
-				</div>
-				<p class="endpoint-rule">A controller or TLS identity change requires freshly entered username, token and CA. Alternatively disable Niko and explicitly clear all three. Saved credentials are never forwarded to a replacement.</p>
-				<div class="two">
-					<div class="field">
-						<label for="niko-username">Hobby API username · write-only</label>
-						<p class="key-state">{saved.niko.hasUsername ? 'Username saved (hidden).' : 'No username saved.'}</p>
-						<input id="niko-username" type="password" bind:value={niko.username} disabled={niko.clearCredentials} aria-invalid={invalid('niko-username')} autocomplete="new-password" autocapitalize="off" spellcheck="false" />
-						<p class="hint">128 UTF-8 bytes maximum. Leave empty to keep the saved username unless changing controller.</p>
-					</div>
-					<div class="field">
-						<label for="niko-jwt">Hobby API token · write-only</label>
-						<p class="key-state">{saved.niko.hasJwt ? 'Token saved (hidden).' : 'No token saved.'}</p>
-						<input id="niko-jwt" type="password" bind:value={niko.jwt} disabled={niko.clearCredentials} aria-invalid={invalid('niko-jwt')} autocomplete="new-password" autocapitalize="off" spellcheck="false" />
-						<p class="hint">2,048 ASCII bytes maximum. Renew the annual token through Niko; expiry is shown from the saved connection below.</p>
-					</div>
-				</div>
-				<div class="field">
-					<label for="niko-caPem">Provided Niko CA certificate PEM · write-only</label>
-					<p class="key-state">{saved.niko.hasCa ? 'CA saved (not returned to the browser).' : 'No CA saved.'}</p>
-					<textarea id="niko-caPem" rows="4" bind:value={niko.caPem} disabled={niko.clearCredentials} aria-invalid={invalid('niko-caPem')} autocomplete="off" autocapitalize="off" spellcheck="false"></textarea>
-					<p class="hint">{utf8Bytes(niko.caPem)} / 8,192 UTF-8 bytes. Enter the owner-provided PEM, including certificate markers. Leave empty to retain it on the same controller.</p>
-				</div>
-				<label class="check"><input type="checkbox" bind:checked={niko.clearCredentials} onchange={() => { niko.username = ''; niko.jwt = ''; niko.caPem = ''; }} /><span>Explicitly clear saved Niko username, token and CA when saving (disable Niko first)</span></label>
-				<p class="hint lan">These values are write-only, never included in returned settings or catalog data, and erased from this form after submission, logout or leaving this page. LAN HTTP and unencrypted NVS are not confidential storage.</p>
-
-				<h3 id="niko-allowedLights" class="section-title">Owner-enabled fixtures · {niko.allowedLights.length} / 16</h3>
-				<p class="hint">The default allowlist is empty. Only authoritative supported Niko lighting/dimmer definitions can be enabled here. Names do not make generic relays, sockets, gates, motors or scenes safe. Other devices remain read-only. Brightness zero is not Status Off.</p>
-				<div class="actions">
-					<button type="button" class="a-btn ghost" disabled={!saved.niko.enabled || nikoPending || niko.controller !== saved.niko.controller || niko.tlsServerName !== saved.niko.tlsServerName} onclick={() => loadNiko()}>{nikoPending ? 'Reading controller…' : 'Refresh saved connection & inventory'}</button>
-					{#if nikoData?.inventory.nextCursor !== null && nikoData?.inventory.nextCursor !== undefined}<button type="button" class="a-btn ghost" disabled={nikoPending} onclick={() => loadNiko(nikoData!.inventory.nextCursor!)}>Next inventory page</button>{/if}
-				</div>
-				{#if !saved.niko.enabled}<p class="hint">Save an enabled complete profile to discover fixtures. Browsing and discovery do not send control commands.</p>{/if}
-				{#if nikoError}<p class="notice error" role="alert">{nikoError}</p>{/if}
-				{#if nikoData}
-					<p role="status"><strong>Saved connection:</strong> {nikoData.status.connected ? 'connected' : 'disconnected'} · {nikoData.status.authenticated ? 'authenticated' : 'not authenticated'} · {nikoData.status.stale || nikoData.inventory.stale || nikoError ? 'observations stale' : 'latest controller observations'}</p>
-					<p class="hint">Configured: {nikoData.status.configured ? 'yes' : 'no'} · Inventory: {nikoData.status.inventoryReady ? 'ready' : 'not ready'} · Token: {nikoData.status.tokenExpired ? 'expired' : nikoData.status.tokenExpiresUtcSeconds ? new Date(nikoData.status.tokenExpiresUtcSeconds * 1000).toLocaleString() : 'expiry unknown'} · Matching controller control observed: {nikoData.status.exercised ? 'yes' : 'not exercised'}. This is not physical or causal proof.</p>
-					{#if nikoData.status.error || nikoData.inventory.error}<p class="notice error" role="alert">{nikoData.status.error || nikoData.inventory.error}</p>{/if}
-					{#if nikoData.inventory.devices.length === 0}<p class="hint">No discovered devices in this page. Check controller discovery status; an empty page does not enable any writes.</p>{/if}
-					<ul class="fixture-list">
-						{#each nikoData.inventory.devices as device (device.id)}
-							<li>
-								<strong>{device.name}</strong> <span class="hint">{device.locationName} · {device.online ? 'controller reports online' : 'offline or unknown'}</span>
-								{#if fixtureWritable(device)}
-									<label class="check"><input type="checkbox" checked={niko.allowedLights.includes(device.id)} disabled={!niko.allowedLights.includes(device.id) && niko.allowedLights.length >= 16} onchange={event => enableFixture(device.id, event.currentTarget.checked)} /><span>Enable this verified lighting fixture for owner-authorized writes</span></label>
-									<p class="hint">Observed Status: {String(device.properties.find(property => property.name === 'Status')?.value ?? 'unknown')}. Controller observation is not physical or causal proof.</p>
-									<div class="actions">
-										{#each ['On', 'Off'] as desired}
-											<button type="button" class="a-btn ghost" disabled={dirty || nikoPending || !saved.niko.allowedLights.includes(device.id) || !runtime?.storage.durable || runtime.busy || !nikoData.status.connected || nikoData.status.stale || nikoData.inventory.stale || !!nikoError} onclick={() => controlFixture(device.id, desired as 'On' | 'Off')}>Request {desired} · {device.name}</button>
-										{/each}
-									</div>
-								{:else}<p class="hint">Read-only: this device does not have an authoritative supported lighting class and writable observed On/Off property.</p>{/if}
-							</li>
-						{/each}
-					</ul>
-				{/if}
-				{#if niko.allowedLights.length}
-					<p class="hint">Saved/draft enabled IDs, including fixtures not on this inventory page:</p>
-					<ul class="fixture-list">{#each niko.allowedLights as id (id)}<li><code>{id}</code> <button type="button" class="a-btn ghost" onclick={() => enableFixture(id, false)}>Remove fixture permission</button></li>{/each}</ul>
-				{/if}
-				<p class="hint">Save explicit fixture permissions before controlling. A request uses the same durable shared tool registry as voice; acceptance, MQTT delivery and observed state are distinct. Inspect <a href="/">Home tool outcomes</a>; unknown outcomes are never automatically replayed.</p>
-			</fieldset>
 
 			<section class="panel-card section" aria-labelledby="other-tools-title">
 				<h2 id="other-tools-title" class="section-title">Other desk tools</h2>
@@ -932,11 +754,6 @@
 	.actions { display: flex; flex-wrap: wrap; gap: 8px; }
 	.lan { border-left: 3px solid var(--mic); padding-left: 10px; }
 	.readiness { display: grid; gap: 8px; margin-top: 16px; border-top: 1px solid var(--rule); padding-top: 16px; }
-	.fixture-list { display: grid; gap: 16px; padding: 0; margin: 16px 0; list-style: none; }
-	.fixture-list li { border-top: 1px solid var(--rule); padding-top: 12px; overflow-wrap: anywhere; }
-	#niko-setup h3 { margin-top: 24px; }
-	#niko-setup a { text-decoration: underline; text-underline-offset: 2px; }
-	#niko-setup a:hover { color: var(--accent-strong); }
 	.page :is(button, input, textarea, select, a):focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 	.page button:active:not(:disabled) { transform: translateY(1px); }
 	.page button:disabled { cursor: not-allowed; opacity: 0.6; }

@@ -85,6 +85,9 @@ bool desk_tools_register(unravel::Agent &agent) {
         unravel::Tool tool;
         tool.name = spec.name; tool.description = spec.description; tool.parameters_json = spec.schema;
         tool.execute = execute; tool.context = const_cast<Spec *>(&spec);
+        tool.read_only = !std::strcmp(spec.name, "calculate") || !std::strcmp(spec.name, "convert_units") ||
+            !std::strcmp(spec.name, "get_weather") || !std::strcmp(spec.name, "search_web");
+        tool.parallel_safe = tool.read_only;  // The desk backend guards its shared state.
         if (!agent.add_tool(std::move(tool))) return false;
     }
     return true;

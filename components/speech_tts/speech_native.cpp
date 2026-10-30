@@ -314,9 +314,13 @@ struct Connection {
         esp_transport_ssl_crt_bundle_attach(transport, esp_crt_bundle_attach);
         esp_transport_ssl_set_common_name(transport, s.endpoint.host);
         int connected = 0;
+        // esp-tls fills its TCP-connect select() sets once and a timeout clears
+        // them, so only the first poll can observe the connect: give it the budget.
+        int poll_ms = static_cast<int>(std::max<int64_t>(1, std::min<int64_t>(10000, (deadline - esp_timer_get_time()) / 1000)));
         do {
             if (s.stop.load() || esp_timer_get_time() >= deadline) return false;
-            connected = esp_transport_connect_async(transport, address, s.endpoint.port, 100);
+            connected = esp_transport_connect_async(transport, address, s.endpoint.port, poll_ms);
+            poll_ms = 100;
             if (!connected) vTaskDelay(pdMS_TO_TICKS(10));
         } while (!connected);
         if (connected < 0) return false;

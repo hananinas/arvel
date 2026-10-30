@@ -12,6 +12,8 @@ pub(crate) struct CallbackTool {
     pub context: usize,
     pub worker: Arc<CallbackWorker>,
     pub history_budget: Arc<AtomicUsize>,
+    // Native handler is read-only and safe to run concurrently with others.
+    pub parallel: bool,
 }
 
 #[derive(Deserialize)]
@@ -35,6 +37,10 @@ impl Tool for CallbackTool {
         self.definition.clone()
     }
 
+    fn parallel_safe(&self) -> bool {
+        self.parallel
+    }
+
     async fn execute(&self, arguments: Value, call: &ToolCallContext<'_>) -> Result<ToolOutput> {
         if call.stop.is_stopped() { return Err(Error::Stopped); }
         if call.deadline.is_some_and(|deadline| tokio::time::Instant::now() >= deadline) {
@@ -51,7 +57,7 @@ impl Tool for CallbackTool {
             "provider_session":call.identity.provider_session,
             "generation":call.identity.generation, "origin":call.identity.origin,
         }), 16 * 1024).map_err(|_| Error::Tool("tool request exceeds byte limit".into()))?;
-        let response = match call_callback(&self.worker, request, self.callback, self.context, 32 * 1024).await {
+        let response = match call_callback(&self.worker, !self.parallel, request, self.callback, self.context, 32 * 1024).await {
             Ok(response) => response,
             Err(_) => return Ok(unknown("tool callback transport failed after dispatch; effect unknown")),
         };

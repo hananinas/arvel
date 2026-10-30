@@ -55,7 +55,7 @@ constexpr size_t pcm_bytes = 1280; // 20 ms, 16 kHz stereo PCM16.
 constexpr size_t opus_tx_bytes = 1275, opus_rx_bytes = 7650;
 constexpr size_t decoded_bytes = 7680; // Maximum 120 ms Opus packet, 16 kHz stereo.
 constexpr size_t sdp_limit = 16384, text_limit = 8192, context_limit = 16384;
-constexpr unsigned tx_slots = 8, rx_slots = 8, event_slots = 4, context_slots = 4;
+constexpr unsigned tx_slots = 8, rx_slots = 8, event_slots = 32, context_slots = 4;
 constexpr const char *memory_error = "Not enough memory for Codex voice.";
 constexpr const char *network_error = "Codex voice disconnected. Check Wi-Fi, then tap the mic to reconnect.";
 constexpr const char *protocol_error = "Codex voice protocol changed. Update firmware before reconnecting.";
@@ -442,13 +442,15 @@ void capture_task(void *argument) {
     auto &s = *static_cast<Session *>(argument); auto &b = *s.buffers;
     void *encoder = nullptr;
     esp_opus_enc_config_t cfg{};
-    cfg.sample_rate = 16000; cfg.channel = 2; cfg.bits_per_sample = 16; cfg.bitrate = 32000;
+    // Mono, low-complexity encoding: stereo or higher complexity starves CPU1
+    // (IDLE1 watchdog) alongside LVGL. Mono Opus is valid in the opus/48000/2 track.
+    cfg.sample_rate = 16000; cfg.channel = 1; cfg.bits_per_sample = 16; cfg.bitrate = 32000;
     cfg.frame_duration = ESP_OPUS_ENC_FRAME_DURATION_20_MS; cfg.application_mode = ESP_OPUS_ENC_APPLICATION_VOIP;
-    cfg.complexity = 2; cfg.enable_fec = true; cfg.enable_dtx = true; cfg.enable_vbr = true;
+    cfg.complexity = 0; cfg.enable_fec = true; cfg.enable_dtx = true; cfg.enable_vbr = true;
     int input_size = 0, output_size = 0;
     if (esp_opus_enc_open(&cfg, sizeof(cfg), &encoder) != ESP_AUDIO_ERR_OK ||
         esp_opus_enc_get_frame_size(encoder, &input_size, &output_size) != ESP_AUDIO_ERR_OK ||
-        input_size != static_cast<int>(pcm_bytes) || output_size <= 0 ||
+        input_size != static_cast<int>(pcm_bytes / 2) || output_size <= 0 ||
         output_size > static_cast<int>(opus_tx_bytes)) s.fail("Codex voice Opus encoder could not initialize.");
     uint32_t pts = 0, last_epoch = UINT32_MAX;
     int64_t stack_at = 0;
@@ -466,7 +468,11 @@ void capture_task(void *argument) {
         if (last_epoch != epoch) { esp_opus_enc_reset(encoder); last_epoch = epoch; }
         Tx *packet = nullptr;
         if (xQueueReceive(s.tx_free, &packet, 0) != pdTRUE) continue; // Keep draining the mic during network jitter.
-        esp_audio_enc_in_frame_t input{b.microphone, pcm_bytes};
+        for (size_t i = 0; i < pcm_bytes / 4; ++i) { // Byte access: the buffer has no int16 alignment guarantee.
+            int16_t left, right; std::memcpy(&left, b.microphone + 4 * i, 2); std::memcpy(&right, b.microphone + 4 * i + 2, 2);
+            const int16_t mono = static_cast<int16_t>((left + right) / 2); std::memcpy(b.microphone + 2 * i, &mono, 2);
+        }
+        esp_audio_enc_in_frame_t input{b.microphone, pcm_bytes / 2};
         esp_audio_enc_out_frame_t encoded{}; encoded.buffer = packet->data; encoded.len = sizeof(packet->data);
         if (esp_opus_enc_process(encoder, &input, &encoded) != ESP_AUDIO_ERR_OK || !encoded.encoded_bytes || encoded.encoded_bytes > opus_tx_bytes) {
             xQueueSend(s.tx_free, &packet, 0); s.fail("Codex microphone Opus encoding failed."); break;

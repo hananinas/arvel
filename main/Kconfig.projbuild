@@ -60,4 +60,43 @@ menu "Unravel Agent"
         string "Codex speech voice"
         default "sol"
 
+    config UNRAVEL_NEBIUS_SANDBOX
+        bool "Enable Nebius cloud sandbox code tools"
+        default n
+        help
+            Allow the agent to submit Python or shell code to Nebius Token
+            Factory Sandboxes. Remote operations may incur charges and retain
+            code/output. Set a project spending limit before enabling.
+            Requires the conversation archive for durable tool admission.
+
+    if UNRAVEL_NEBIUS_SANDBOX
+        config UNRAVEL_NEBIUS_API_KEY
+            string "Nebius Sandboxes API key"
+            default ""
+            help
+                Create a key at tokenfactory.nebius.com/project/api-keys.
+                Embedded in firmware, never sent to sandbox code or the model.
+                Do not publish sdkconfig, generated headers or firmware.
+
+        config UNRAVEL_NEBIUS_PROJECT_ID
+            string "Nebius project ID"
+            default ""
+
+        config UNRAVEL_NEBIUS_IMAGE
+            string "Sandbox base image UUID or tag: reference"
+            default "tag:python:3.12-slim"
+            help
+                Select an image available to your project with
+                /usr/local/bin/python3 and /bin/sh. Prefer an immutable UUID.
+                Shell-only images can run shell code but may lack Python.
+
+        config UNRAVEL_NEBIUS_ALLOW_NETWORK
+            bool "Permit the agent to request guest network access"
+            default n
+            help
+                Needed for apt/pip or other internet access inside the sandbox.
+                Each call must also explicitly request network=true.
+                Disabled runs have no guest network interface.
+    endif
+
 endmenu

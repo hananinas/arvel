@@ -14,10 +14,12 @@
 #include "codex_auth.hpp"
 #include "speech_live.hpp"
 #include "conversation_store.hpp"
-#include "niko_home_control.hpp"
+#include "desk_buddy.h"
 #include "mbedtls/platform_util.h"
 #include <cmath>
 #include <algorithm>
+#include <memory>
+#include <new>
 #include <string>
 #include <stdlib.h>
 #include <string.h>
@@ -827,46 +829,85 @@ static esp_err_t api_agent_readiness_handler(httpd_req_t *req)
     return agent_submit_response(req, ai_chat_check_native_readiness(AI_CHAT_NATIVE));
 }
 
-static esp_err_t api_device_niko_get_handler(httpd_req_t *req)
+static bool add_desk_note(cJSON *notes, const desk_note_t &note)
 {
-    if (!owner_device_allowed(req, false)) return ESP_OK;
-    OwnerQuery query;
-    if (!owner_query(req, query)) return agent_response(req, "400 Bad Request", "{\"error\":\"invalid_niko_query\"}");
-    const std::string status = niko_home_control::status_json();
-    const std::string inventory = niko_home_control::inventory_json(query.after, query.count);
-    std::string body; body.reserve(status.size() + inventory.size() + 24);
-    body.append("{\"status\":").append(status).append(",\"inventory\":").append(inventory).append("}");
-    if (!owner_authenticated(req)) return agent_response(req, "401 Unauthorized", "{\"error\":\"login_required\"}");
-    return agent_response(req, "200 OK", body.c_str());
+    cJSON *item = cJSON_CreateObject();
+    if (!item || !cJSON_AddItemToArray(notes, item)) { cJSON_Delete(item); return false; }
+    return cJSON_AddNumberToObject(item, "id", note.id) &&
+        cJSON_AddStringToObject(item, "kind", note.task ? "task" : "note") &&
+        cJSON_AddStringToObject(item, "text", note.text) &&
+        cJSON_AddStringToObject(item, "dueDate", note.due_date) &&
+        cJSON_AddBoolToObject(item, "completed", note.completed);
 }
 
-static esp_err_t api_device_niko_control_handler(httpd_req_t *req)
+static bool add_desk_timer(cJSON *root)
 {
-    cJSON *body = owner_device_body(req);
-    if (!body) return ESP_FAIL;
-    unsigned seen = 0; bool valid = true;
-    for (const cJSON *field = body->child; field; field = field->next) {
-        unsigned bit = 0;
-        if (!strcmp(field->string, "device_id")) {
-            bit = 1; valid = valid && cJSON_IsString(field) && conversation_store::valid_uuid(field->valuestring);
-        } else if (!strcmp(field->string, "status")) {
-            bit = 2; valid = valid && cJSON_IsString(field) && (!strcmp(field->valuestring, "On") || !strcmp(field->valuestring, "Off"));
-        } else if (!strcmp(field->string, "brightness")) {
-            bit = 4; valid = valid && cJSON_IsNumber(field) && std::isfinite(field->valuedouble) &&
-                field->valuedouble >= 0 && field->valuedouble <= 100 && std::floor(field->valuedouble) == field->valuedouble;
-        } else valid = false;
-        if (seen & bit) valid = false;
-        seen |= bit;
+    desk_timer_snapshot_t timer{};
+    if (!desk_buddy_timer_snapshot(&timer) || timer.status == DESK_TIMER_IDLE) return cJSON_AddNullToObject(root, "timer");
+    static const char *const statuses[] = {"idle", "running", "paused", "done"};
+    static const char *const phases[] = {"timer", "focus", "break"};
+    cJSON *item = cJSON_AddObjectToObject(root, "timer");
+    return item && cJSON_AddStringToObject(item, "status", statuses[timer.status]) &&
+        cJSON_AddStringToObject(item, "phase", phases[timer.phase]) &&
+        cJSON_AddBoolToObject(item, "pomodoro", timer.pomodoro) &&
+        cJSON_AddNumberToObject(item, "round", timer.round) &&
+        cJSON_AddNumberToObject(item, "rounds", timer.rounds) &&
+        cJSON_AddNumberToObject(item, "remainingSeconds", timer.remaining_seconds) &&
+        cJSON_AddNumberToObject(item, "durationSeconds", timer.duration_seconds) &&
+        cJSON_AddStringToObject(item, "label", timer.label);
+}
+
+static bool add_desk_weather(cJSON *root)
+{
+    std::unique_ptr<desk_weather_snapshot_t> weather(new (std::nothrow) desk_weather_snapshot_t{});
+    if (!weather) return false;
+    if (!desk_buddy_weather_snapshot(weather.get())) return cJSON_AddNullToObject(root, "weather");
+    cJSON *item = cJSON_AddObjectToObject(root, "weather");
+    bool okay = item && cJSON_AddStringToObject(item, "location", weather->location) &&
+        cJSON_AddStringToObject(item, "condition", weather->condition) &&
+        cJSON_AddNumberToObject(item, "weatherCode", weather->weather_code) &&
+        cJSON_AddNumberToObject(item, "temperatureC", weather->temperature_c) &&
+        cJSON_AddNumberToObject(item, "feelsLikeC", weather->feels_like_c) &&
+        cJSON_AddNumberToObject(item, "highC", weather->high_c) &&
+        cJSON_AddNumberToObject(item, "lowC", weather->low_c) &&
+        cJSON_AddNumberToObject(item, "windKmh", weather->wind_kmh) &&
+        cJSON_AddNumberToObject(item, "fetchedAt", static_cast<double>(weather->fetched_at)) &&
+        cJSON_AddNumberToObject(item, "utcOffsetSeconds", weather->utc_offset_seconds);
+    cJSON *forecast = okay ? cJSON_AddArrayToObject(item, "forecast") : nullptr;
+    okay = forecast != nullptr;
+    for (unsigned i = 0; okay && i < weather->forecast_count && i < DESK_FORECAST_HOURS; ++i) {
+        const desk_forecast_hour_t &hour = weather->forecast[i];
+        cJSON *entry = cJSON_CreateObject();
+        if (!entry || !cJSON_AddItemToArray(forecast, entry)) { cJSON_Delete(entry); return false; }
+        okay = cJSON_AddNumberToObject(entry, "time", static_cast<double>(hour.time)) &&
+            cJSON_AddNumberToObject(entry, "temperatureC", hour.temperature_c) &&
+            cJSON_AddNumberToObject(entry, "precipitationProbability", hour.precipitation_probability) &&
+            cJSON_AddNumberToObject(entry, "weatherCode", hour.weather_code);
     }
-    if (!valid || !(seen & 1) || !(seen & 6)) {
-        cJSON_Delete(body);
-        return agent_response(req, "400 Bad Request", "{\"error\":\"one_device_id_and_absolute_status_or_brightness_required\"}");
+    return okay;
+}
+
+/* Read-only view of the desk tools' local state (notes/tasks, timer, cached
+ * weather). Changes still go through the agent's tools, never this route. */
+static esp_err_t api_device_desk_get_handler(httpd_req_t *req)
+{
+    if (!owner_device_allowed(req, false)) return ESP_OK;
+    std::unique_ptr<cJSON, decltype(&cJSON_Delete)> root(cJSON_CreateObject(), cJSON_Delete);
+    bool okay = root && cJSON_AddBoolToObject(root.get(), "notesReady", desk_buddy_notes_ready());
+    cJSON *notes = okay ? cJSON_AddArrayToObject(root.get(), "notes") : nullptr;
+    okay = notes != nullptr;
+    desk_note_t note{};
+    for (size_t i = 0; okay && desk_buddy_note_get(i, &note); ++i) okay = add_desk_note(notes, note);
+    okay = okay && add_desk_timer(root.get()) && add_desk_weather(root.get());
+    char *body = okay ? cJSON_PrintUnformatted(root.get()) : nullptr;
+    if (!body) return agent_submit_response(req, AI_CHAT_NO_MEMORY);
+    if (!owner_authenticated(req)) {
+        cJSON_free(body);
+        return agent_response(req, "401 Unauthorized", "{\"error\":\"login_required\"}");
     }
-    OwnerArchiveAuthority authority;
-    const ai_chat_submit_result_t submitted = owner_cookie(req, authority.token) && web_auth_authorized(authority.token) ?
-        ai_chat_owner_niko_control(body, authority.token) : AI_CHAT_FORBIDDEN;
-    cJSON_Delete(body);
-    return agent_submit_response(req, submitted);
+    const esp_err_t result = agent_response(req, "200 OK", body);
+    cJSON_free(body);
+    return result;
 }
 
 static esp_err_t api_agent_chat_handler(httpd_req_t *req)
@@ -1532,7 +1573,7 @@ httpd_handle_t web_server_start(void)
     static_assert(CONFIG_HTTPD_MAX_URI_LEN >= 2304, "History routes require CONFIG_HTTPD_MAX_URI_LEN >= 2304");
     // The 16-socket pool leaves six beyond HTTP's three internal and seven client sockets.
     config.max_open_sockets = 7;
-    config.max_uri_handlers = 80; // Includes agent endpoints and existing Wi-Fi routes.
+    config.max_uri_handlers = 96; // 83 routes including the final static fallback, plus headroom.
     config.uri_match_fn = httpd_uri_match_wildcard;
     config.stack_size = 8192; // Increase stack size for JSON operations
     config.lru_purge_enable = true;
@@ -1564,8 +1605,7 @@ httpd_handle_t web_server_start(void)
         { .uri = "/rest/device/history*", .method = HTTP_GET, .handler = api_device_history_handler, .user_ctx = NULL },
         { .uri = "/rest/device/history*", .method = HTTP_POST, .handler = api_device_history_handler, .user_ctx = NULL },
         { .uri = "/rest/device/history*", .method = HTTP_DELETE, .handler = api_device_history_handler, .user_ctx = NULL },
-        { .uri = "/rest/device/niko", .method = HTTP_GET, .handler = api_device_niko_get_handler, .user_ctx = NULL },
-        { .uri = "/rest/device/niko/control", .method = HTTP_POST, .handler = api_device_niko_control_handler, .user_ctx = NULL },
+        { .uri = "/rest/device/desk", .method = HTTP_GET, .handler = api_device_desk_get_handler, .user_ctx = NULL },
         { .uri = "/rest/agent/readiness", .method = HTTP_POST, .handler = api_agent_readiness_handler, .user_ctx = NULL },
         { .uri = "/rest/agent", .method = HTTP_GET, .handler = api_agent_get_handler, .user_ctx = NULL },
         { .uri = "/rest/agent/chat", .method = HTTP_POST, .handler = api_agent_chat_handler, .user_ctx = NULL },

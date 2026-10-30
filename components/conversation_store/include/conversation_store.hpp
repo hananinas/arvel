@@ -7,7 +7,8 @@ namespace unravel { class Agent; }
 namespace conversation_store {
 constexpr size_t kTextLimit = 8192;
 constexpr size_t kOutputLimit = 48 * 1024;
-constexpr size_t kSqliteHeapBytes = 256 * 1024;
+// PSRAM-backed. 256 KiB peaked at 247 KiB and failed exports/history searches with NOMEM.
+constexpr size_t kSqliteHeapBytes = 512 * 1024;
 constexpr unsigned kPageLimit = 20;
 enum class State { stopped, mounting, missing, mount_failed, ready, full, error };
 enum class Error { none, unavailable, invalid, too_large, busy, cancelled, full, io, conflict, not_found };

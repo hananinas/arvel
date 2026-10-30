@@ -129,7 +129,15 @@ BoundedHttps &BoundedHttps::owner(esp_transport_handle_t handle) {
 int BoundedHttps::connect(esp_transport_handle_t handle, const char *, int port, int) {
     auto &self = owner(handle);
     if (self.stopped()) { errno = ECANCELED; return -1; }
-    return esp_transport_connect_async(self.tls_, self.address_.c_str(), port, self.wait_ms());
+    // esp-tls fills its select() sets for the TCP connect only once, and a
+    // select timeout clears them, so a connect slower than the first poll can
+    // never complete. Give the first poll the whole TCP connect budget.
+    int timeout = self.wait_ms();
+    if (!self.connect_started_) {
+        self.connect_started_ = true;
+        timeout = static_cast<int>(std::min<int64_t>(10000, (self.deadline_ - esp_timer_get_time() + 999) / 1000));
+    }
+    return esp_transport_connect_async(self.tls_, self.address_.c_str(), port, std::max(timeout, 1));
 }
 int BoundedHttps::read(esp_transport_handle_t handle, char *buffer, int length, int) {
     auto &self = owner(handle);

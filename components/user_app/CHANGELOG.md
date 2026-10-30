@@ -1,5 +1,29 @@
 # Arvel firmware changelog
 
+## Parallel read-only tools, background scenes and Nebius preset — 2026-10-30
+
+- Up to three consecutive read-only tool calls from one model reply (weather, web search, calculation, unit conversion, device status, battery) now run concurrently on separate callback threads. Model calls and effectful tools still wait for every earlier callback. Tool policy state moved from shared globals into each call, and the in-memory duplicate ledger gained a lock.
+- `set_display` accepts a background scene by id or display name ("Rainy" → `rainy-window`) and lists valid ids on rejection. The system prompt asks for direct setting calls and batched independent lookups.
+- Settings adds a **Nebius · DeepSeek V4.1 Flash** chat preset (`deepseek-ai/DeepSeek-V4.1-Flash` on Token Factory us-north1). A direct API request returned both expected tool calls in one reply.
+- The screen status row and web previews no longer show Codex's fixed `gpt-live-1-codex` model.
+- Host runtime suite passed, including a new overlap test that fails with parallelism disabled; ai_chat_bsp suite, Svelte check and 27 interface tests passed. ESP-IDF build `0x50ef90` bytes, 16% slot free. The parallel-tools build was app-only flashed and booted cleanly; the label/preset build is built but not yet flashed. Concurrent-tool internal-RAM headroom under live voice is unmeasured.
+
+## Physical sandbox provisioning and HTTP route capacity — 2026-10-21
+
+- Loaded the owner's supplied Nebius key/project into ignored `sdkconfig.local`, enabled the sandbox tools, and retained disabled guest networking. Verified the generated configuration matches the supplied credentials without printing them.
+- Read the connected ESP32-S3 partition table and OTA selection before deployment: the existing two-slot layout matches, with `ota_0` selected. Built application `0x513de0` bytes with `0xec220` bytes (15%) slot headroom, flashed only the application at `0x10000`, and verified its flash hash. Bootloader, partition table, OTA selection and NVS/storage partitions were not flashed.
+- Physical boot completed UI initialization, native tool registration, web-server startup and Wi-Fi connection. No panic/abort/brownout was observed during the bounded boot capture. Owner authentication remained configured; no login reset or microphone start was performed.
+- Actual device HTTP initially returned 404 for `/`, `/index.html` and `/settings` while authentication/device APIs responded. Found 84 route registrations competing for 80 slots, with the static fallback registered last. Increased capacity to 96, rebuilt and app-only reflashed; real Chromium then rendered Arvel Home, `/` and `/settings` returned 200, protected `/rest/device` remained 401, and no browser page errors were observed. This is physical HTTP/browser evidence, not a physical-panel screenshot.
+- Nebius accepted the supplied key at `/whoami`, but returned false for every Sandboxes permission, including `spawn`, `spawn_disposable`, `list` and `cancel`; image discovery returned 403. Live sandbox execution remains blocked on correct project/caller activation. No execution job was submitted and no successful cloud execution is claimed.
+
+## Nebius sandbox code tools — 2026-10-21
+
+- Added opt-in `sandbox_run_code` and `sandbox_operation` tools through the existing agent registry, observer and durable SD admission policy. Python/shell source runs remotely via the Nebius Sandboxes REST API; no SDK, desktop bridge or local generated-code execution. Expanded C++/Rust registry capacity to eighteen without changing per-response call limits or enabling tools in the legacy agent.
+- Added private build-time API key/project/image settings and a separate guest-network permission gate. Verified HTTPS uses a fixed origin, header-only credentials, an absolute eight-second local I/O deadline, joined internal-stack workers, bounded responses and no automatic redirects/retries. Remote execution is separately bounded to 1–300 seconds; output is capped at 512 bytes per stream.
+- Submission acceptance, pending status, service completion, nonzero exit, signal, timeout, cancellation request and unknown outcomes remain distinct. Saved filesystem images require explicit continuation by returned UUID. Chat Stop does not claim remote cancellation; uncertain effects are never blindly replayed. Reused the standard Run tool row with a fixed Nebius target rather than displaying source code as its label.
+- Host sandbox regressions and the existing C++/Rust runtime suite passed, including eighteen-tool RPC admission, durable-policy refusal, Unicode input, network permissions, image continuation, terminal-result validation, output bounds and uncertain outcomes. Separate throwaway executables exercised a simulated submit/status/refusal lifecycle and actual disabled-feature registration/dispatch. No real Nebius credentials or connected board were available; no live sandbox execution, cloud spend or physical-device acceptance is claimed.
+- ESP-IDF 5.5.3 built the enabled integration from an isolated private configuration with inert Nebius credential placeholders: application `0x513d20` bytes, `0xec2e0` bytes (15%) free per 6 MiB OTA slot. Both production sandbox sources compiled and linked. Existing LVGL enum-conversion and vendor libc executable-stack warnings remain. No flash was performed.
+
 ## Submission host baseline — 2026-10-19
 
 - Updated the Codex authentication host transport fixture for the current `BoundedHttps` constructor, absolute-deadline cap and borrowed cancellation predicate. Production authentication and test assertions are unchanged.

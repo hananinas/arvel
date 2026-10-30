@@ -2,6 +2,7 @@
 #include "cJSON.h"
 #include <atomic>
 #include <cassert>
+#include <chrono>
 #include <cstring>
 #include <iostream>
 #include <memory>
@@ -9,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <thread>
 
 static std::atomic<bool> fail_next_array{false};
 
@@ -188,7 +190,7 @@ static void execution_behavior()
     assert(cJSON_IsObject(cJSON_GetObjectItemCaseSensitive(definition,"parameters")));
     for (unsigned i = 1; i < UNRAVEL_MAX_TOOLS; ++i)
         assert(agent.add_tool({"read" + std::to_string(i),"read","{}",effect,&fixture}));
-    assert(!agent.add_tool({"seventeenth","read","{}",effect,&fixture}));
+    assert(!agent.add_tool({"overflow","read","{}",effect,&fixture}));
 }
 
 struct ToolProvider {
@@ -230,6 +232,10 @@ static void bridge_behavior()
     fixture.response = "{\"ok\":false,\"error\":\"controller refused\"}";
     unravel::Agent agent(tool_model,&provider);
     assert(agent.add_tool({"effect","action","{\"type\":\"object\"}",effect,&fixture}));
+    // Keep the full firmware registry usable through the Rust RPC boundary,
+    // not just through C++ registration/native tool projection.
+    for (unsigned i = 1; i < UNRAVEL_MAX_TOOLS; ++i)
+        assert(agent.add_tool({"read" + std::to_string(i),"read","{\"type\":\"object\"}",effect,&fixture}));
     unravel::ToolCallContext call;
     call.run_id = "owned-run"; call.generation = 7;
     agent.set_call_context(call);
@@ -260,6 +266,24 @@ static void bridge_behavior()
     uncertain_fixture.ack = true;
     unknown = uncertain.run("resume without replay","fixture");
     assert(!unknown.ok && uncertain_fixture.effects == 1 && uncertain_provider.requests == 1);
+    // An interrupted read-only call reaches the model as a failed result instead
+    // of blocking the conversation; the stored session keeps the unknown marker.
+    ToolProvider lookup_provider;
+    ExecutionFixture lookup_fixture;
+    lookup_fixture.ack = false;
+    unravel::Agent lookup(tool_model,&lookup_provider);
+    unravel::Tool read_tool{"effect","read","{}",effect,&lookup_fixture};
+    read_tool.read_only = true;
+    assert(lookup.add_tool(std::move(read_tool)));
+    lookup.set_call_context(call);
+    lookup.set_tool_policy(before,after,&lookup_fixture);
+    unknown = lookup.run("effect","fixture");
+    assert(!unknown.ok && lookup.session().find("tool_unknown") != std::string::npos);
+    lookup_fixture.ack = true;
+    const int lookup_requests = lookup_provider.requests;
+    lookup.run("resume after read-only interruption","fixture");
+    assert(lookup_provider.requests > lookup_requests);
+    assert(lookup.session().find("tool_unknown") != std::string::npos);
 }
 
 static void durable_admission_behavior()
@@ -295,8 +319,69 @@ static void durable_admission_behavior()
     assert(result.state == unravel::ToolState::unknown && fixture.effects == 3);
 }
 
+struct ParallelFixture {
+    std::atomic<int> started{0};
+    std::atomic<int> peak{0};
+    std::atomic<int> active{0};
+    int model_calls = 0;
+};
+// The first reply asks for two parallel-safe reads and one serial tool.
+static int32_t parallel_model(const uint8_t *, size_t, uint8_t *response, size_t capacity, void *opaque)
+{
+    auto &fixture = *static_cast<ParallelFixture *>(opaque);
+    const char *wire = fixture.model_calls++ ? "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Completed\"},\"finish_reason\":\"stop\"}]}" :
+        "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":["
+        "{\"id\":\"a\",\"type\":\"function\",\"function\":{\"name\":\"read_a\",\"arguments\":\"{}\"}},"
+        "{\"id\":\"b\",\"type\":\"function\",\"function\":{\"name\":\"read_b\",\"arguments\":\"{}\"}},"
+        "{\"id\":\"c\",\"type\":\"function\",\"function\":{\"name\":\"write\",\"arguments\":\"{}\"}}]},"
+        "\"finish_reason\":\"tool_calls\"}]}";
+    const size_t count = std::strlen(wire);
+    assert(count <= capacity);
+    std::memcpy(response, wire, count);
+    return static_cast<int32_t>(count);
+}
+// Each read waits (bounded) for its sibling, so serial execution shows as peak 1.
+static bool parallel_read(const char *, std::string &output, const unravel::ToolCallContext &, void *opaque)
+{
+    auto &fixture = *static_cast<ParallelFixture *>(opaque);
+    const int now = ++fixture.active;
+    for (int peak = fixture.peak.load(); now > peak && !fixture.peak.compare_exchange_weak(peak, now);) {}
+    ++fixture.started;
+    const auto give_up = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    while (fixture.started.load() < 2 && std::chrono::steady_clock::now() < give_up)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    --fixture.active;
+    output = "{\"ok\":true}";
+    return true;
+}
+static bool serial_write(const char *, std::string &output, const unravel::ToolCallContext &, void *opaque)
+{
+    auto &fixture = *static_cast<ParallelFixture *>(opaque);
+    assert(fixture.active.load() == 0 && fixture.started.load() == 2);
+    output = "{\"ok\":true}";
+    return true;
+}
+static void parallel_behavior()
+{
+    ParallelFixture fixture;
+    unravel::Agent agent(parallel_model, &fixture);
+    unravel::Tool read_a{"read_a","read","{\"type\":\"object\"}",parallel_read,&fixture};
+    read_a.read_only = read_a.parallel_safe = true;
+    unravel::Tool read_b = read_a; read_b.name = "read_b";
+    assert(agent.add_tool(read_a) && agent.add_tool(read_b));
+    assert(agent.add_tool({"write","write","{\"type\":\"object\"}",serial_write,&fixture}));
+    unravel::ToolCallContext call;
+    call.run_id = "parallel-run";
+    agent.set_call_context(call);
+    auto result = agent.run("read both", "fixture");
+    assert(result.ok && result.output == "Completed");
+    assert(fixture.peak.load() == 2 && fixture.model_calls == 2);
+    std::cout << "PASS: parallel-safe reads overlap; a following serial tool waits for them\n";
+}
+
 int main()
 {
+    parallel_behavior();
     execution_behavior();
     bridge_behavior();
     durable_admission_behavior();

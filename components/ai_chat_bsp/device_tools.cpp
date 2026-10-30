@@ -9,10 +9,12 @@
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <string>
 #include <vector>
 
 namespace {
@@ -91,7 +93,10 @@ cJSON *field_schema(const char *arg)
         describe("string", "Turn the screen off after this long without activity.");
         ok = add_string_enum(p, buddy_screen_sleep_names, 3) && ok;
     } else if (!strcmp(arg, "scene")) {
-        describe("string", "Background scene the buddy sits in.");
+        std::string text = "Background (wallpaper) scene behind the buddy. Dark scenes:";
+        for (size_t i = 0; i < ARVEL_SCENE_COUNT; ++i)
+            if (arvel_scenes[i].dark) text += std::string(" ") + arvel_scenes[i].id;
+        describe("string", (text + ".").c_str());
         const char *ids[ARVEL_SCENE_COUNT];
         for (size_t i = 0; i < ARVEL_SCENE_COUNT; ++i) ids[i] = arvel_scenes[i].id;
         ok = add_string_enum(p, ids, ARVEL_SCENE_COUNT) && ok;
@@ -139,6 +144,22 @@ cJSON *object_schema(const Spec &spec)
 
 // ---------------------------------------------------------------- runners
 
+// Models often pass a scene's display name ("Rainy", "rainy window") rather
+// than its id ("rainy-window"); accept either, ignoring case and separators.
+const char *scene_id(const char *requested)
+{
+    auto same = [](const char *a, const char *b) {
+        auto fold = [](char c) {
+            return c == ' ' || c == '_' ? '-' : static_cast<char>(tolower(static_cast<unsigned char>(c)));
+        };
+        for (; *a && *b; ++a, ++b) if (fold(*a) != fold(*b)) return false;
+        return !*a && !*b;
+    };
+    for (size_t i = 0; i < ARVEL_SCENE_COUNT; ++i)
+        if (same(requested, arvel_scenes[i].id) || same(requested, arvel_scenes[i].name)) return arvel_scenes[i].id;
+    return nullptr;
+}
+
 bool run_settings(const Spec &spec, const cJSON *args, cJSON *out, const unravel::ToolCallContext &call)
 {
     Json patch(cJSON_CreateObject(), cJSON_Delete);
@@ -157,12 +178,22 @@ bool run_settings(const Spec &spec, const cJSON *args, cJSON *out, const unravel
             // The device stores tenths of normal speed.
             if (!cJSON_IsNumber(arg)) return error(out, "speaking_speed must be a number from 0.5 to 2.0.");
             value = cJSON_CreateNumber(std::lround(arg->valuedouble * 10));
+        } else if (!strcmp(field->arg, "scene")) {
+            const char *id = cJSON_IsString(arg) ? scene_id(arg->valuestring) : nullptr;
+            if (!id) {
+                std::string message = "Unknown scene. Use one of:";
+                for (size_t i = 0; i < ARVEL_SCENE_COUNT; ++i) message += std::string(" ") + arvel_scenes[i].id;
+                return error(out, message.c_str());
+            }
+            value = cJSON_CreateString(id);
         } else {
             value = cJSON_Duplicate(arg, true);
         }
         if (!group || !value) { cJSON_Delete(value); return false; }
         cJSON_AddItemToObject(group, field->key, value);
-        cJSON_AddItemToObject(applied.get(), arg->string, cJSON_Duplicate(arg, true));
+        // Report the canonical scene id; other values as the model sent them.
+        cJSON_AddItemToObject(applied.get(), arg->string,
+            cJSON_Duplicate(!strcmp(field->arg, "scene") ? value : arg, true));
         ++count;
     }
     if (!count) return error(out, "Give at least one setting to change.");
@@ -272,7 +303,7 @@ const Spec SPECS[] = {
      "Read the battery voltage and estimated charge percentage. The device cannot detect charging.",
      run_battery, nullptr, 0},
     {"set_display", BUDDY_TOOL_EDIT, "Set", nullptr,
-     "Change the screen: brightness, night dimming, screen-sleep timeout or background scene. "
+     "Change the screen: brightness, night dimming, screen-sleep timeout or the background/wallpaper scene. "
      "Applies and saves immediately. Pass only what the user asked to change.",
      run_settings, DISPLAY_FIELDS, sizeof(DISPLAY_FIELDS) / sizeof(DISPLAY_FIELDS[0])},
     {"set_sound", BUDDY_TOOL_EDIT, "Set", nullptr,
@@ -333,6 +364,10 @@ bool device_tools_register(unravel::Agent &agent, DeviceSettingsApplier applier)
         tool.parameters_json = text;
         tool.execute = execute;
         tool.context = const_cast<Spec *>(&spec);
+        tool.read_only = !strcmp(spec.name, "get_device_status") || !strcmp(spec.name, "get_battery") ||
+            !strcmp(spec.name, "scan_wifi");
+        // Status and battery only read locked state; a Wi-Fi scan owns the radio.
+        tool.parallel_safe = !strcmp(spec.name, "get_device_status") || !strcmp(spec.name, "get_battery");
         cJSON_free(text);
         if (!agent.add_tool(std::move(tool))) {
             ESP_LOGE("buddy", "Could not register device tool %s", spec.name);

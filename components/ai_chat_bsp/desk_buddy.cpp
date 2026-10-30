@@ -672,7 +672,9 @@ bool desk_backend_known_tool(const char *tool) {
 }
 bool desk_backend_needs_internal_stack(const char *tool, const cJSON *arguments) {
     if (!tool) return false;
-    if (!std::strcmp(tool, "search_web") || !std::strcmp(tool, "get_weather")) return true;
+    // Only NVS note writes need an internal stack (flash writes disable the
+    // cache). HTTPS tools run on the caller's PSRAM stack like model requests;
+    // a 12 KiB internal stack during live voice exhausts internal RAM and SD DMA.
     const char *action = string(field(arguments, "action"));
     return !std::strcmp(tool, "manage_notes") && action && std::strcmp(action, "list");
 }

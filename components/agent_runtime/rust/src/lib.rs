@@ -69,6 +69,43 @@ fn bounded_json(value: &impl Serialize, limit: usize) -> serde_json::Result<Vec<
     Ok(writer.inner)
 }
 
+const RESOLVED_UNKNOWN: &str = "unknown_outcome_resolved";
+
+// An interrupted call leaves a ToolUnknown that blocks every later run and can
+// never be evicted, so one interruption would brick the conversation. For
+// read-only tools the model instead sees an explicit failed result (never
+// success); the archive and the caller keep the original ToolUnknown. Unknown
+// effects still block until the owner resets the conversation.
+fn resolve_unknown(session: &mut Session, read_only: &[String]) -> bool {
+    let mut resolved = false;
+    for message in &mut session.messages {
+        if let Message::ToolUnknown { call_id, name, reason } = message {
+            if !read_only.iter().any(|tool| tool == name) { continue; }
+            let content = json!({
+                "ok": false, "state": "unknown", "error": reason, RESOLVED_UNKNOWN: true,
+                "instruction": "This earlier call was interrupted and its outcome is unknown. Do not assume it \
+                    succeeded and do not repeat it without the user's explicit confirmation.",
+            }).to_string();
+            *message = Message::Tool {
+                call_id: std::mem::take(call_id), name: std::mem::take(name), content, is_error: true,
+            };
+            resolved = true;
+        }
+    }
+    resolved
+}
+
+fn restore_unknown(session: &mut Session) {
+    for message in &mut session.messages {
+        if let Message::Tool { call_id, name, content, is_error: true } = message {
+            let Ok(Value::Object(fields)) = serde_json::from_str::<Value>(content) else { continue };
+            if fields.get(RESOLVED_UNKNOWN) != Some(&Value::Bool(true)) { continue; }
+            let reason = fields.get("error").and_then(Value::as_str).unwrap_or("outcome unknown").to_owned();
+            *message = Message::ToolUnknown { call_id: std::mem::take(call_id), name: std::mem::take(name), reason };
+        }
+    }
+}
+
 fn encoded_len(value: &impl Serialize, limit: usize) -> serde_json::Result<usize> {
     let mut writer = LimitedWriter { inner: io::sink(), count: 0, limit };
     serde_json::to_writer(&mut writer, value)?;
@@ -102,6 +139,10 @@ struct RunParams {
     message_offset: u64,
     #[serde(default)]
     execution: ToolExecutionIdentity,
+    #[serde(default)]
+    read_only_tools: Vec<String>,
+    #[serde(default)]
+    parallel_tools: Vec<String>,
 }
 
 fn valid_session(session: &Session) -> bool {
@@ -158,7 +199,8 @@ fn run(id: Value, params: Value, callback: Option<ModelCallback>,
     if !valid_session(&session) {
         return Ok(error(id, -32602, "session exceeds limits or contains unsupported content"));
     }
-    if params.tools.len() > 16 || params.tools.iter().any(|tool| {
+    if params.tools.len() > 18 || params.read_only_tools.len() > params.tools.len()
+        || params.parallel_tools.len() > params.tools.len() || params.tools.iter().any(|tool| {
         tool.name.trim().is_empty() || tool.name.len() > 64
             || tool.description.len() > 2048 || !tool.parameters.is_object()
             || !fits(&tool.parameters, 8 * 1024)
@@ -172,9 +214,10 @@ fn run(id: Value, params: Value, callback: Option<ModelCallback>,
         let tool_callback = tool_callback.ok_or(SETUP_FAILED)?;
         let clock_callback = clock_callback.ok_or(SETUP_FAILED)?;
         for definition in params.tools {
+            let parallel = params.parallel_tools.contains(&definition.name);
             if let Err(failure) = tools.register(tool::CallbackTool {
                 definition, callback:tool_callback, clock:clock_callback, context, worker:worker.clone(),
-                history_budget:history_budget.clone(),
+                history_budget:history_budget.clone(), parallel,
             }) {
                 return Ok(error(id, -32602, &failure.to_string()));
             }
@@ -199,15 +242,29 @@ fn run(id: Value, params: Value, callback: Option<ModelCallback>,
         max_observation_bytes: 0,
         max_output: Some(1024),
         prefer_streaming: false,
-        max_parallel_tools: 1,
+        // Consecutive read-only calls (weather + search, status + battery) run
+        // together. Each holds one 12 KiB internal-stack callback thread; three
+        // also fits the conversation store's four-request queue.
+        max_parallel_tools: 3,
         ..LoopConfig::default()
     };
     let agent = AgentLoop::new(model, tools,
         params.system_prompt.unwrap_or_else(|| "You are a helpful assistant.".into()))
         .with_config(config)
         .with_execution_identity(execution);
+    let _ = session.reconcile_tool_history();
+    let resolved = resolve_unknown(&mut session, &params.read_only_tools);
     let mut checkpoint = |session: &mut Session| {
         let archive = checkpoint_callback.map(|callback| move |bytes: &[u8], offset| {
+            let restored;
+            let bytes = if resolved {
+                let mut archived: Session = serde_json::from_slice(bytes)
+                    .map_err(|_| unravel_agent_runtime::Error::Tool("archive view could not be rebuilt".into()))?;
+                restore_unknown(&mut archived);
+                restored = bounded_json(&archived, SESSION_LIMIT)
+                    .map_err(|_| unravel_agent_runtime::Error::Tool("archive view exceeds hard limit".into()))?;
+                restored.as_slice()
+            } else { bytes };
             // Synchronous acknowledgment on the non-audio RPC worker.
             if unsafe { callback(bytes.as_ptr(), bytes.len(), offset, context as *mut c_void) } != 1 {
                 return Err(unravel_agent_runtime::Error::Tool("archive acknowledgment failed; history retained".into()));
@@ -222,6 +279,7 @@ fn run(id: Value, params: Value, callback: Option<ModelCallback>,
     // callbacks cannot be preempted, and their context is caller-owned.
     drop(runtime);
     worker.join().map_err(|_| SETUP_FAILED)?;
+    restore_unknown(&mut session);
     let reply = match result {
         Ok(output) if valid_session(&session) => {
             json!({"jsonrpc":"2.0","id":id,"result":{"output":output,"session":session,"message_offset":message_offset}})
@@ -341,4 +399,32 @@ pub unsafe extern "C" fn unravel_agent_rpc(
         writer.count as i32
     }));
     result.unwrap_or(PANIC)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use unravel_agent_runtime::ToolCall;
+
+    #[test]
+    fn unknown_outcome_is_failed_for_the_model_and_unknown_in_the_archive() {
+        let mut session = Session::new("s");
+        session.messages.push(Message::user_text("turn on the light"));
+        session.messages.push(Message::Assistant {
+            content: String::new(), reasoning: None,
+            tool_calls: vec![ToolCall { id: "call-1".into(), name: "niko_control".into(), arguments: json!({}) }],
+        });
+        session.messages.push(Message::ToolUnknown { call_id: "call-1".into(), name: "niko_control".into(), reason: "power lost".into() });
+        let original = session.clone();
+        assert!(!resolve_unknown(&mut session, &["get_weather".into()]));
+        assert!(session.has_unresolved_unknowns());
+        assert!(resolve_unknown(&mut session, &["niko_control".into()]));
+        assert!(!session.has_unresolved_unknowns());
+        let Message::Tool { content, is_error, .. } = &session.messages[2] else { panic!("not resolved") };
+        assert!(*is_error && content.contains("\"ok\":false") && content.contains("power lost"));
+        assert!(checkpoint::valid_groups(&session.messages));
+        restore_unknown(&mut session);
+        assert_eq!(serde_json::to_string(&session).unwrap(), serde_json::to_string(&original).unwrap());
+        assert!(!resolve_unknown(&mut Session::new("empty"), &["niko_control".into()]));
+    }
 }

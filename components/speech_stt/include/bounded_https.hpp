@@ -39,4 +39,5 @@ private:
     bool cancelled() const;
     esp_transport_handle_t tls_ = nullptr, wrapper_ = nullptr;
     std::string hostname_, address_;
+    bool connect_started_ = false;
 };

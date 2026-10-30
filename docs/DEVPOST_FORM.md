@@ -1,6 +1,6 @@
 # Devpost form draft — Arvel
 
-Paste-ready field text below. Bracketed items are unresolved submission inputs, not completed work. This draft uses the recorded local research and host verification; no device, provider or GPU was contacted to prepare it. Recheck current event rules before submitting.
+Paste-ready field text below. Bracketed items are unresolved submission inputs, not completed work. Round 4 (2026-10-30) added one direct Token Factory API check and an app-only flash/boot of the connected board; no GPU was contacted. Recheck current event rules before submitting.
 
 ## Project name
 
@@ -8,31 +8,31 @@ Arvel
 
 ## Short tagline
 
-A voice-first desk companion that keeps its memory and home controls with you.
+A voice-first desk companion that keeps its memory with you and acts through real device tools.
 
-Alternates: "Your desk companion: local tools, owner-held memory, real home control." / "A desk companion that remembers you and acts with you at home." Pick before submitting; the tagline must name what the device actually does.
+Alternates: "Your desk companion: local tools, owner-held memory, a screen that answers back." / "A desk companion that remembers you and gets small things done." Pick before submitting; the tagline must name what the device actually does. Home control (Niko) was removed in round 4, so earlier home-control taglines no longer apply.
 
 ## Built With
 
-**Nebius Token Factory** (conversation inference, OpenAI-compatible API) and **NVIDIA Nemotron** (the conversation model; exact model artifact to be named once the deployment is configured). Also: ESP-IDF 5.5.3, Waveshare ESP32-S3-Touch-LCD-3.49, Rust agent runtime (unravel-agent-runtime) over an in-process C ABI, SvelteKit owner web app compiled into firmware, SQLite on SD (conversation archive and durable tool ledger), MQTT over TLS (Niko Home Control II Hobby API), Tavily (search_web), Open-Meteo (weather), eSpeak-NG (local read-aloud).
+**Nebius Token Factory** (conversation inference, OpenAI-compatible API) serving **DeepSeek V4.1 Flash** (`deepseek-ai/DeepSeek-V4.1-Flash`), and **Nebius Sandboxes** (opt-in remote code execution). Also: ESP-IDF 5.5.3, Waveshare ESP32-S3-Touch-LCD-3.49, Rust agent runtime (unravel-agent-runtime) over an in-process C ABI, SvelteKit owner web app compiled into firmware, SQLite on SD (conversation archive and durable tool ledger), Tavily or Parallel.ai (search_web), Open-Meteo (weather), eSpeak-NG (local read-aloud).
 
 ## Description: features, functionality and architecture
 
-Arvel is a desk companion for people who want a small touchscreen and voice interface for desk tasks, conversation history and explicitly authorized home controls. It runs on the Waveshare ESP32-S3-Touch-LCD-3.49. The board handles the touchscreen, microphone/speaker lifecycle, device tools and local storage; a separately configured cloud service handles conversation inference. No Nemotron model runs on the ESP32.
+Arvel is a desk companion for people who want a small touchscreen and voice interface for desk tasks, device settings and conversation history. It runs on the Waveshare ESP32-S3-Touch-LCD-3.49. The board handles the touchscreen, microphone/speaker lifecycle, device tools and local storage; a separately configured cloud service handles conversation inference. No model runs on the ESP32.
 
-The ESP-IDF firmware integrates a Rust agent runtime through an in-process C ABI and C++ model/tool callbacks. Sixteen registered tools cover timers, notes, calculation, unit conversion, weather, web search, device/battery/Wi-Fi status, display/sound/profile settings, history search and three Niko Home Control II operations. Weather, search, inference and Niko need their respective external services or controller; a registered tool is not evidence that those services have been exercised.
+The ESP-IDF firmware integrates a Rust agent runtime through an in-process C ABI and C++ model/tool callbacks. Thirteen standard tools cover timers, notes, calculation, unit conversion, weather, web search, device/battery/Wi-Fi status, display/sound/profile settings (including the background scene) and history search; an opt-in build adds two Nebius Sandboxes tools. When one model reply requests several read-only tools, the runtime runs up to three at once; effectful tools stay sequential. Weather, search, sandbox and inference need their respective external services; a registered tool is not evidence that those services have been exercised.
 
 An authenticated SvelteKit owner web app is compiled into the firmware. It exposes settings, conversation/tool states, returned source links and history management. Web voice controls operate the board microphone, not the browser microphone. SQLite on the owner's SD card stores finalized text and tool evidence, not raw audio by default. Resuming restores bounded text context; it does not reopen voice or repeat an earlier action. The durable tool ledger reuses completed results, rejects conflicting identities/arguments and reports unfinished calls as unknown after recovery. It is not an exactly-once guarantee across physical power loss.
 
-The Niko integration uses direct MQTT over verified TLS. Writes require an allowlisted supported light/dimmer, confirmation and ready durable storage. The default allowlist is empty. A published command is not proof of a physical effect, and uncertain actions are not automatically replayed. There is no device shell or generic command-execution tool.
+Sandbox code runs remotely in Nebius, never on the board, and requires durable SD admission; uncertain operations are not automatically resubmitted. There is no device shell or local command-execution tool.
 
 ### Exactly where NVIDIA and Nebius fit
 
-**Submission inference deployment: [TBD: Nebius Token Factory endpoint + Nemotron model - pending owner setup]**
+**Submission inference deployment: DeepSeek V4.1 Flash (`deepseek-ai/DeepSeek-V4.1-Flash`) on Nebius Token Factory, `https://api.tokenfactory.us-north1.nebius.com/v1/chat/completions`, text pipeline.**
 
-This is a pending deployment choice, not a configured or verified inference service. For a compatible text model, Nebius Token Factory would perform remote text inference through its OpenAI-compatible API. That does not establish native speech support. The separate native-audio adapter targets the released NVIDIA-NemotronLabs-VoiceChat-11B protocol, with the model served on owner-provisioned Nebius AI Cloud GPU compute if that route is selected and authorized. In that architecture, NVIDIA's model would consume speech and generate speech/tool events in the cloud, while the ESP32 would stream audio, execute permitted tools and maintain local state/history.
+Nebius Token Factory performs remote text inference through its OpenAI-compatible API; the board sends the conversation and tool schemas and executes the returned tool calls locally. A direct 2026-10-30 check with a two-tool schema returned both expected tool calls in one reply in 0.81 s. The selected model is not an NVIDIA model. That does not establish native speech support. The separate native-audio adapter targets the released NVIDIA-NemotronLabs-VoiceChat-11B protocol, with the model served on owner-provisioned Nebius AI Cloud GPU compute if that route is selected and authorized. In that architecture, NVIDIA's model would consume speech and generate speech/tool events in the cloud, while the ESP32 would stream audio, execute permitted tools and maintain local state/history.
 
-The actual endpoint, exact model artifact, transport, permissions and judging availability must be established before claiming NVIDIA-on-Nebius operation. Token Factory and a self-hosted VoiceChat server are not interchangeable protocols. No live Token Factory call, Nebius GPU deployment or NVIDIA speech/tool inference has been performed in these submission-preparation rounds. The existing text pipeline, experimental Codex subscription voice and native-audio adapter are explicit alternatives; an unavailable service does not silently switch to another model. Codex is not evidence of qualifying NVIDIA inference.
+That native-speech route remains an unexercised alternative. Token Factory and a self-hosted VoiceChat server are not interchangeable protocols. No Nebius GPU deployment or NVIDIA speech/tool inference has been performed. Nebius also lists `nvidia/Nemotron-3.5-Super-VL` for this key; it passed the same direct tool-call check (1.19 s) but is not the selected model. The existing text pipeline, experimental Codex subscription voice and native-audio adapter are explicit alternatives; an unavailable service does not silently switch to another model. Codex is not evidence of qualifying NVIDIA inference.
 
 ### What has been verified
 
@@ -50,13 +50,13 @@ Physical AI exempts the public hosted-demo URL under the recorded rules. The pro
 
 [TBD after filming]
 
-The planned public English-language video is under three minutes. `docs/demo-video-storyboard.md` is the shot plan, not captured footage. Rights, consent and genuine supported NVIDIA-on-Nebius inference must be established before filming the qualifying run.
+The planned public English-language video is under three minutes. `docs/demo-video-storyboard.md` is the shot plan, not captured footage. Rights and consent must be established before filming; the run should show the DeepSeek-on-Nebius model identity on screen.
 
 ## Track
 
-**Physical AI.** Arvel is a physical sensing/acting device with a microphone, speaker, touchscreen and bounded device/home-control tools, rather than only a browser chatbot.
+**Physical AI.** Arvel is a physical sensing/acting device with a microphone, speaker, touchscreen and bounded device tools, rather than only a browser chatbot.
 
-The planned continuous 0:15–1:40 segment provides 85 seconds of actual hardware operation: owner-started microphone, a genuine NVIDIA-on-Nebius spoken exchange, one confirmed allowlisted lighting action with its physical effect shown, interruption and a real search answer with its returned source. These are planned acceptance shots, not completed demonstrations. If a dependency is unavailable, disclose the failure; do not substitute fixtures, cached audio, Codex or a health response for qualifying hardware/model operation. Restart/SD recall is a separately labeled edit, not proof of an uninterrupted soak.
+The planned continuous 0:15–1:40 segment provides 85 seconds of actual hardware operation: owner-started microphone, a Nebius-served exchange, a background-scene change visible on the screen, interruption and a real search answer with its returned source. These are planned acceptance shots, not completed demonstrations. If a dependency is unavailable, disclose the failure; do not substitute fixtures, cached audio, Codex or a health response for qualifying hardware/model operation. Restart/SD recall is a separately labeled edit, not proof of an uninterrupted soak.
 
 ## Tool feedback
 
@@ -95,7 +95,7 @@ A single versioned matrix linking checkpoint, container, driver requirements, re
 
 ### Nebius usage status
 
-No live Token Factory call has been made yet. No Nebius GPU resource has been provisioned or exercised during these rounds. The catalog entry and configurable endpoint establish an integration path, not service usage. Deployment access, GPU quota, bounded spending and qualifying NVIDIA inference remain pending; there is no invented provider success, latency or billing measurement in this form.
+Round 4 made live Token Factory calls on 2026-10-30 from the build host: `/v1/models` listed eight models for the project key, and single chat-completions requests with a two-tool schema returned correct parallel tool calls from `deepseek-ai/DeepSeek-V4.1-Flash` (0.81 s) and `nvidia/Nemotron-3.5-Super-VL` (1.19 s). These are single requests, not latency, throughput or availability measurements. The us-north1 host differed from the catalog's `api.tokenfactory.nebius.com` base; the endpoint had to be found manually. An earlier Sandboxes permission check returned no permissions for the project; the device's SD history for 2026-10-29 16:15 records a real run: asked to run `print(2+2)`, `sandbox_run_code` and two `sandbox_operation` calls completed with state succeeded, and Arvel reported output `4`, exit code 0, for operation `01a1883a-d6d1-7690-bde5-3efece270a96`. No Nebius GPU resource was provisioned.
 
 ### Research references
 
@@ -120,9 +120,10 @@ Arvel was not built from scratch for this submission. The 2026-10-16 commit belo
 | 2026-10-19 | `2026b872cda24693f7c4a4cb94b8e64e8bdba8db` | Round 2: one 80-ID durable read-only delegation ledger regression; no production speech_live changes |
 | 2026-10-19 | `50e7b221300e29c995ea594ac73f7ee77d5d7bd4` | Round 2: judge submission draft and timed 2:50 demo storyboard |
 | 2026-10-19 | `8fea697a7911d37a6f8eb81bc30d289d95decfd8` | Round 3: regenerate and embed fixed owner UI assets |
-| 2026-10-19 | This commit: `docs(submission): finalize round-3 evidence and Devpost form` | Round 3: build measurements, final gate evidence and paste-ready Devpost form with honest deployment/access placeholders |
-
-The final row names this introducing documentation commit by subject; its SHA is available from the committed repository history rather than a self-referential hash in the file.
+| 2026-10-19 | `f11d7bc9035273ae42f815f1d8b40a081d624dc3` `docs(submission): finalize round-3 evidence and Devpost form` | Round 3: build measurements, final gate evidence and paste-ready Devpost form with honest deployment/access placeholders |
+| 2026-10-19 | `2aa753d654e3a811aa2eb84517647817ce628bb9` | Align form and storyboard with organizer submission tips |
+| 2026-10-21 | Round 4 commit | Niko integration removed; opt-in Nebius Sandboxes tools; route capacity and voice-archive fixes |
+| 2026-10-30 | Round 4 commit | Parallel read-only tools, background-scene resolution, Nebius DeepSeek V4.1 Flash preset, Codex model label hidden, submission docs updated |
 
 ## Judging access plan: December 1–15, 2026
 
@@ -132,14 +133,14 @@ Use an isolated demonstration network, synthetic/non-private conversation histor
 
 If cloud inference is established, provide dedicated restricted project credentials through a private channel, never household credentials or personal provider accounts. Restrict them to the demonstration deployment and required judging capabilities; keep internal Triton ports private. The owner must fund and authorize the necessary availability, with monitored spend limits and an agreed testing schedule that still satisfies judging access. Resolve any availability/cost conflict before submission rather than claiming an unfunded always-on service.
 
-Keep Stop/microphone control, action confirmation and the empty-by-default allowlist intact. Revoke temporary accounts/tokens, stop/delete authorized cloud resources and remove demonstration data after the window. No judging account, deployment or organizer arrangement has been established by this draft.
+Keep Stop/microphone control and durable admission for sandbox submissions intact; do not enable the guest-network option for judging. Revoke temporary accounts/tokens, stop/delete authorized cloud resources and remove demonstration data after the window. No judging account, deployment or organizer arrangement has been established by this draft.
 
 ## Pre-submission checklist (owner actions)
 
 1. Rotate the OpenRouter credential previously committed to git history (README security note) before the repository becomes public; confirm no live key material exists in tracked files (scan passed at HEAD on 2026-10-19) and never commit the Token Factory key.
 2. Decide repository publication and resolve THIRD_PARTY_NOTICES rights questions (Espressif, NVIDIA public-demo/judging permissions, artwork); commit the currently untracked notices and deployment documents once cleared.
-3. Configure the Nebius Token Factory deployment with a Nemotron model and replace the [TBD] inference placeholder in this form, SUBMISSION.md and the storyboard.
-4. Fill the final Built With model artifact name; confirm the project name and tagline.
-5. Film the 2:50 storyboard; speak the stack sentence aloud and show the model identity on screen (organizer tip: name Token Factory and the NVIDIA model with audio, not only text); upload to YouTube as public.
+3. Inference is set to DeepSeek V4.1 Flash on Nebius Token Factory. Save the preset and key on the device and confirm a typed chat with a tool call before filming.
+4. Confirm the project name and tagline (home-control wording was removed with Niko).
+5. Film the 2:50 storyboard; speak the stack sentence aloud and show the model identity on screen (organizer tip: name Token Factory and the model with audio, not only text); upload to YouTube as public.
 6. Decide the demo URL field (Physical AI exemption) and confirm judging access for December 1 to 15.
-7. Submit several days before the October 30 deadline; submissions remain editable until then.
+7. The recorded deadline is October 30: submit now, then keep editing while the form allows.

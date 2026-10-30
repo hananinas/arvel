@@ -51,7 +51,7 @@ ai_chat_submit_result_t ai_chat_reset(ai_chat_source_t source);
  * Accepted submissions complete exactly once, including cancellation/staleness.
  * Completion runs on the serial registry worker, never LVGL or a second LLM.
  * Requests/outcomes use the durable SD ledger when ready; local controls can
- * operate explicitly non-durably when SD is missing, but Niko writes cannot. */
+ * operate explicitly non-durably when SD is missing. */
 ai_chat_submit_result_t ai_chat_submit_desk_tool(const char *tool, const cJSON *arguments,
     desk_buddy_reply_callback_t callback, void *context);
 /* Live modes: first tap starts native/Codex speech; later taps mute/unmute.
@@ -66,7 +66,6 @@ ai_chat_submit_result_t ai_chat_memory_action(ai_chat_source_t source, const cha
 /* Fixed authenticated HTTP routes only. Tokens are privately copied, checked
  * again immediately before mutation, zeroized on job release, never archived. */
 ai_chat_submit_result_t ai_chat_owner_memory_action(const char *action, const char *uuid, const char *owner_session_token);
-ai_chat_submit_result_t ai_chat_owner_niko_control(const cJSON *arguments, const char *owner_session_token);
 /* Asynchronous authenticated health only; never opens microphone/inference. */
 ai_chat_submit_result_t ai_chat_check_native_readiness(ai_chat_source_t source);
 

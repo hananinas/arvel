@@ -2,7 +2,15 @@
 
 Arvel is a desk companion for the Waveshare ESP32-S3-Touch-LCD-3.49. It runs ESP-IDF firmware with a touchscreen interface, a SvelteKit web app, and the Rust [unravel-agent-runtime](https://github.com/unravelaidk/unravel-agent-runtime) on the board.
 
-You can type or talk to it, set timers, keep notes, check the weather, search the web, and control supported Niko lights. Cloud models handle conversation. The board runs the agent loop and device tools.
+![Arvel held up to the camera: the 3.49-inch screen shows the bird mascot at its laptop next to a Pomodoro card reading "Focus · round 1 of 4", 19:54 left, "Study · 20 min focus", with Pause, +5 min and Cancel buttons](docs/images/arvel-device.jpg)
+
+You can type or talk to it, set timers, keep notes, check the weather, and search the web. Cloud models handle conversation. The board runs the agent loop and device tools.
+
+The owner web app shows Arvel's screen live and keeps your conversation history:
+
+![Arvel's owner web app: a live drawing of the 640 × 172 device screen with its scene, status card and quick actions, plus voice, screen and brightness controls](docs/images/arvel-home.png)
+
+![A saved conversation in Arvel's chat history: the user asks for Python in the Nebius sandbox, the sandbox_run_code and sandbox_operation tool rows complete, and Arvel reports the output and final status](docs/images/arvel-chat.png)
 
 ## Conversation modes
 
@@ -87,7 +95,7 @@ Once the layout matches, flash over USB. Replace the port with your board's port
 idf.py -p /dev/ttyACM0 flash monitor
 ```
 
-The current build and partition layout have not been flashed in this project.
+The sandbox-enabled V1 build was app-only flashed and booted on a connected ESP32-S3 after reading and verifying its matching partition table and OTA selection. Tool registration and the actual device web interface were exercised. A live Nebius sandbox run (`print(2+2)`, output `4`, exit code 0) is recorded in the device's SD history. Full-layout migration and other board revisions remain unverified.
 
 `sdkconfig.local` and its backup are ignored. Credentials entered in menuconfig become part of the firmware, so do not share that configuration, generated headers or credential-bearing images. You can configure provider credentials in the browser instead.
 
@@ -109,6 +117,8 @@ On Arvel, open **Settings → Device → Web login**. Visit the device's display
 ### Configure providers
 
 Use the browser Settings page to save provider credentials and select the conversation mode.
+
+The **Chat API & model** section has one-click presets. **Nebius · DeepSeek V4.1 Flash** fills in `https://api.tokenfactory.us-north1.nebius.com/v1/chat/completions` and `deepseek-ai/DeepSeek-V4.1-Flash`; add a [Token Factory API key](https://tokenfactory.nebius.com/project/api-keys) and save. Without a preset, the firmware defaults are:
 
 | Setting | Default or source |
 | --- | --- |
@@ -143,7 +153,7 @@ Open `http://127.0.0.1:5173/` and log in with the device account. Vite proxies r
 
 ## Tools and memory
 
-Arvel has sixteen registered tools. Timers, notes, calculations and conversions run locally. Weather uses Open-Meteo. Web search uses Tavily or Parallel.ai and requires a key under **Settings → Search tools**. Search starts disabled.
+Arvel has thirteen standard tools, plus two optional Nebius sandbox tools. Timers, notes, calculations and conversions run locally. Weather uses Open-Meteo. Web search uses Tavily or Parallel.ai and requires a key under **Settings → Search tools**. Search starts disabled.
 
 | Tools | Purpose |
 | --- | --- |
@@ -153,21 +163,44 @@ Arvel has sixteen registered tools. Timers, notes, calculations and conversions 
 | `get_device_status`, `get_battery`, `scan_wifi` | Device, battery and network information |
 | `set_display`, `set_sound`, `set_profile` | Device preferences |
 | `search_history` | Search the SD conversation archive |
-| `niko_list_devices`, `niko_get_state`, `niko_control` | Discover, inspect and control supported Niko devices |
+| `sandbox_run_code`, `sandbox_operation` (opt-in) | Execute Python/shell in Nebius, inspect results or request cancellation |
+
+When one model reply asks for several read-only tools in a row (weather, web search, calculation, unit conversion, device status, battery), the runtime runs up to three of them at once. Tools that change something, the Wi-Fi scan and history search always run one at a time, after any earlier calls finish. `set_display` accepts a background scene by id or display name, so "Rainy" selects `rainy-window`.
+
+### Nebius sandbox code execution
+
+The ESP32 calls the [Nebius Sandboxes REST API](https://docs.tokenfactory.nebius.com/sandboxes/start/set-up-access) directly over verified HTTPS. No Python SDK, desktop bridge, host shell or local execution of generated code is involved. This is separate from the NVIDIA speech deployment.
+
+1. Get a Sandboxes-enabled API key and project ID from [Token Factory](https://tokenfactory.nebius.com/project/api-keys). Confirm project quota/spending limits before enabling agent execution.
+2. Open **Unravel Agent** in `menuconfig` using your private `sdkconfig.local`. Enable **Nebius cloud sandbox code tools** (`CONFIG_UNRAVEL_NEBIUS_SANDBOX`), enter `CONFIG_UNRAVEL_NEBIUS_API_KEY` and `CONFIG_UNRAVEL_NEBIUS_PROJECT_ID`, and select `CONFIG_UNRAVEL_NEBIUS_IMAGE`. The default is `tag:python:3.12-slim`; verify it is available to your project, or use an immutable image UUID. Python mode requires `/usr/local/bin/python3`; shell mode requires `/bin/sh`.
+3. Rebuild and flash using the instructions above. These settings are build-time only, not browser settings. Missing/invalid enabled configuration stops agent initialization; disabled configuration registers no sandbox tools.
+4. Use ready SD conversation storage: submission, status and cancellation require durable tool admission. Ask, for example: **“Run Python in the Nebius sandbox to print the first ten Fibonacci numbers.”**
+
+The model submits a call such as:
+
+```json
+{"language":"python","code":"a,b=0,1\nfor _ in range(10):\n print(a)\n a,b=b,a+b"}
+```
+
+`sandbox_run_code` accepts `language` (`python` or `shell`), nonblank UTF-8 `code` up to 4096 bytes, and optional `timeout_seconds` (1–300; default 60), `save_filesystem` (default false), `network` (default false), and `image_uuid` (an immutable continuation image). Code is sent as base64 stdin, not interpolated into a host command. Each submission returns an `operation_id`, not proof that the code succeeded.
+
+Use `sandbox_operation` with `{"operation_id":"<returned UUID>","action":"status"}` to inspect completion. Pending states are not code success; terminal results distinguish service status, exit code, signal and timeout. Output retains its `ascii`/`base64` representation and truncation flags, capped at 512 bytes per stream. There is no background polling; if work is still running, ask to check its ID again later.
+
+For `apt`/`pip`, first enable **Permit the agent to request guest network access** (`CONFIG_UNRAVEL_NEBIUS_ALLOW_NETWORK`), then request `network:true` on the setup call. For example, run shell code `apt-get update -q && apt-get install -y qrencode` with `save_filesystem:true` and a suitable timeout. After successful setup, use the returned `result_image_uuid` as `image_uuid` in the Python call that invokes `qrencode`. Separate runs do **not** share changes unless you explicitly save and reuse the returned image; they never preserve live processes. Network permission must be requested independently on each run.
+
+Credentials stay in HTTPS headers, not guest environment or model-visible tool arguments. Firmware/configuration still contain the key: do not publish either. Only submitted code is sent; device files, notes and history are not automatically uploaded. Code, outputs and saved images can be retained by Nebius, and calls/results enter the device conversation archive. Do not submit secrets or private data without authorization; sandbox output is untrusted.
+
+Stopping chat interrupts the local request, **not** an already-submitted remote operation. Use `sandbox_operation` with `action:"cancel"` and its operation ID to request cancellation, then inspect status to confirm. Remote charges may continue until termination. Uncertain submission/cancellation outcomes are labeled `unknown` and never automatically retried; do not blindly resubmit work.
+If an unresolved tool outcome blocks further turns in the current conversation, start a new conversation and supply the known operation ID, or inspect the operation through Nebius's own CLI. If submission returned no ID, reconcile it there before submitting again.
+
+Host regressions: `components/nebius_sandbox/test/run.sh`. They use the real tool registry/runtime with scripted cloud responses, not live Nebius execution.
+
 
 ### Conversation archive
 
-Insert an SD card before startup to archive conversations in SQLite. Home's **Local conversation memory** lets you search, start, resume, close, delete and export conversations as JSON Lines. Close a conversation before exporting it for a stable snapshot.
+Insert an SD card before startup to archive conversations in SQLite. Home's **Chat history** lets you search, start, resume, close, delete and export conversations as JSON Lines. Close a conversation before exporting it for a stable snapshot.
 
 The archive stores final text, tool results and sources, not raw audio by default. Resuming restores text context. It does not reopen a voice connection or repeat an action. Storage errors do not trigger automatic formatting. Deletion does not securely erase data from the card.
-
-### Niko Home Control II
-
-Enable the controller's Hobby API, then enter its username, JWT and CA under **Settings → Niko Home Control II · direct connection**. Arvel connects over MQTT TLS on port 8884 without Home Assistant or a PC bridge.
-
-Discovery is read-only. Enable writes for individual supported lighting or dimmer devices. Relays, sockets, gates, motors, heating and scenes stay read-only. Controls require confirmation and a working SD action ledger. Arvel does not replay commands after a disconnect. If an outcome is unknown, check the device before trying again.
-
-See [Niko's Hobby API documentation](https://guide.niko.eu/en/connhc2/lv/hobby-api) for controller setup.
 
 ## Device controls
 
@@ -183,7 +216,7 @@ Use the web app only on a trusted LAN. It uses HTTP, so local traffic can expose
 
 Provider and Codex credentials live in unencrypted flash/NVS. SD history is also unencrypted. Keep the board and card physically secure. Selected audio, messages and tool context go to the configured cloud provider. Rotate any credentials previously committed to Git, including the OpenRouter key removed from older source.
 
-The current firmware has host-test and build coverage, but not physical display, audio, SD-fault or Niko-controller verification. Codex live calls retain a 64-delegation limit, and long-call/Opus watchdog problems remain unresolved. The audio echo guard is not acoustic echo cancellation. Arvel has no host shell, Git or MCP execution tools.
+The current firmware has host-test and build coverage, but not physical display, audio, or SD-fault verification. Codex live calls retain a 64-delegation limit, and long-call/Opus watchdog problems remain unresolved. The audio echo guard is not acoustic echo cancellation. Arvel has no host shell, Git or MCP execution tools.
 
 ## Reusable C++ binding
 

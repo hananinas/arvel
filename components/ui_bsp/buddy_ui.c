@@ -901,7 +901,7 @@ static void refresh_status(void)
     else if(ui.mode == MODE_SPEAKING && !ui.reply_spoken && !ui.voice_active) label = "REPLY";
     lv_obj_set_style_bg_color(ui.status_dot, ui.mode == MODE_SPEAKING ? p->accent : lv_color_hex(dot), 0);
     set_text(ui.status_label, label);
-    set_fitted(ui.model_label, ui.model[0] ? ui.model : "No model set", F11M, 1, 200);
+    set_fitted(ui.model_label, ui.model, F11M, 1, 200);
 
     char line[200];
     if(ui.state == BUDDY_ERROR) {

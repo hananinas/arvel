@@ -221,17 +221,26 @@ fn parse_response(bytes: &[u8]) -> Result<ModelResponse> {
 
 #[derive(Default)]
 pub(crate) struct CallbackWorker {
-    thread: Mutex<Option<JoinHandle<()>>>,
+    threads: Mutex<Vec<JoinHandle<()>>>,
 }
 
 impl CallbackWorker {
-    pub fn join(&self) -> Result<()> {
-        let mut thread = self.thread.lock()
+    fn take(&self, finished_only: bool) -> Result<Vec<JoinHandle<()>>> {
+        let mut threads = self.threads.lock()
             .map_err(|_| invalid("native callback worker lock failed"))?;
-        if let Some(thread) = thread.take() {
-            thread.join().map_err(|_| invalid("native callback worker failed"))?;
+        let (done, running): (Vec<_>, Vec<_>) = std::mem::take(&mut *threads).into_iter()
+            .partition(|thread| !finished_only || thread.is_finished());
+        *threads = running;
+        Ok(done)
+    }
+
+    /// Wait for every native callback, including any whose async wait timed out.
+    pub fn join(&self) -> Result<()> {
+        let mut failed = false;
+        for thread in self.take(false)? {
+            failed |= thread.join().is_err();
         }
-        Ok(())
+        if failed { Err(invalid("native callback worker failed")) } else { Ok(()) }
     }
 }
 
@@ -242,15 +251,22 @@ impl Drop for CallbackWorker {
     }
 }
 
+/// `exclusive` callbacks first wait for every earlier callback, so a timed-out
+/// call never overlaps the next one. Parallel-safe tools only reap finished
+/// threads, letting a bounded group of read-only calls run concurrently.
 pub(crate) async fn call_callback(
-    worker: &CallbackWorker,
+    worker: &CallbackWorker, exclusive: bool,
     request: Vec<u8>, callback: ModelCallback, context: usize, capacity: usize,
 ) -> Result<Vec<u8>> {
     let receiver = {
-        // Model and tool callbacks are serial. Reap the previous thread before
-        // allocating another internal stack.
-        worker.join()?;
-        let mut thread = worker.thread.lock()
+        if exclusive {
+            worker.join()?;
+        } else {
+            for thread in worker.take(true)? {
+                thread.join().map_err(|_| invalid("native callback worker failed"))?;
+            }
+        }
+        let mut threads = worker.threads.lock()
             .map_err(|_| invalid("native callback worker lock failed"))?;
         let (sender, receiver) = oneshot::channel();
         let builder = thread::Builder::new().name("unravel-https".into());
@@ -258,7 +274,7 @@ pub(crate) async fn call_callback(
         // HTTPS path used <4 KiB; 12 KiB retains headroom without a 24 KiB block.
         #[cfg(target_os = "espidf")]
         let builder = builder.stack_size(12 * 1024);
-        *thread = Some(builder.spawn(move || {
+        threads.push(builder.spawn(move || {
             let result = (|| -> Result<Vec<u8>> {
                 let mut response = vec![0u8; capacity];
                 // SAFETY: RPC joins this worker before returning, even if its
@@ -288,7 +304,7 @@ impl Model for CallbackModel {
         let history_bytes = encoded_len(&request.messages, SESSION_LIMIT.saturating_sub(4096))
             .map_err(|_| invalid("session has insufficient space for another model turn"))?;
         let request = payload(&self.model, request)?;
-        let response = call_callback(&self.worker, request, self.callback, self.context, MODEL_RESPONSE_LIMIT).await?;
+        let response = call_callback(&self.worker, true, request, self.callback, self.context, MODEL_RESPONSE_LIMIT).await?;
         let response = parse_response(&response)?;
         let remaining = SESSION_LIMIT.saturating_sub(history_bytes + 4096);
         // Response includes non-persisted usage/finish fields; a conservative
@@ -337,7 +353,7 @@ mod tests {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_time().build().unwrap();
         runtime.block_on(async {
-            let callback = call_callback(&worker, vec![], gated_callback, address, 1);
+            let callback = call_callback(&worker, true, vec![], gated_callback, address, 1);
             tokio::pin!(callback);
             tokio::select! {
                 result = &mut callback => panic!("callback completed before release: {result:?}"),

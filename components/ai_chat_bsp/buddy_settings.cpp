@@ -42,11 +42,6 @@ constexpr size_t provider_limit = 64;
 constexpr size_t conversation_fields = 5, conversation_header = 6 + 2 * conversation_fields;
 constexpr size_t conversation_limit = conversation_header + 2 * provider_limit + model_limit + endpoint_limit + key_limit;
 constexpr const char *conversation_modes[] = {"text_pipeline", "codex_live", "native_audio"};
-constexpr size_t niko_host_limit = 253, niko_username_limit = 128;
-constexpr size_t niko_jwt_limit = 2048, niko_ca_limit = 8192, niko_fixture_limit = 16;
-constexpr size_t niko_fields = 5, niko_header = 7 + 2 * niko_fields;
-constexpr size_t niko_record_limit = niko_header + 2 * niko_host_limit +
-    niko_username_limit + niko_jwt_limit + niko_ca_limit + 36 * niko_fixture_limit;
 
 struct NvsHandle {
     nvs_handle_t value = 0;
@@ -216,48 +211,6 @@ bool valid_live_endpoint(const std::string &url) {
     return path != std::string::npos && url.compare(path, std::string::npos, "/v1/realtime") == 0;
 }
 
-bool valid_niko_host(const std::string &host) {
-    if (host.empty() || host.size() > niko_host_limit || host.find_first_of(":/[]@?#\\") != std::string::npos)
-        return false;
-    return valid_url("https://" + host + "/", "https://");
-}
-
-bool valid_fixture_id(const std::string &id) {
-    if (id.size() != 36) return false;
-    for (size_t i = 0; i < id.size(); ++i) {
-        if (i == 8 || i == 13 || i == 18 || i == 23) { if (id[i] != '-') return false; }
-        else if (hex_digit(id[i]) < 0 || (id[i] >= 'A' && id[i] <= 'F')) return false;
-    }
-    return true;
-}
-
-bool validate_niko(const BuddyNikoProfile &niko, std::string &error) {
-    if ((!niko.controller.empty() && !valid_niko_host(niko.controller)) ||
-        (!niko.tls_server_name.empty() && !valid_niko_host(niko.tls_server_name)))
-        return fail(error, "Niko controller and TLS identity must be DNS names or IPv4 addresses, without URL or port.");
-    if (!valid_text(niko.username, niko_username_limit, true, false, false) ||
-        niko.jwt.size() > niko_jwt_limit ||
-        !valid_text(niko.jwt, niko_jwt_limit, true, false, false))
-        return fail(error, "Niko username/token exceed their 128/2048 byte limits or contain whitespace or controls.");
-    for (unsigned char c : niko.jwt) if (c < 0x21 || c > 0x7e)
-        return fail(error, "Niko token must contain printable ASCII without whitespace.");
-    if (!valid_text(niko.ca_pem, niko_ca_limit, true, true, true) ||
-        (!niko.ca_pem.empty() && (niko.ca_pem.find("-----BEGIN CERTIFICATE-----") != 0 ||
-         niko.ca_pem.find("-----END CERTIFICATE-----") == std::string::npos)))
-        return fail(error, "Provide the Niko certificate PEM (at most 8192 bytes), not a trust bypass.");
-    if (niko.allowed_lights.size() > niko_fixture_limit)
-        return fail(error, "At most 16 individual Niko light/dimmer IDs may be enabled.");
-    for (size_t i = 0; i < niko.allowed_lights.size(); ++i) {
-        if (!valid_fixture_id(niko.allowed_lights[i])) return fail(error, "Niko fixture IDs must be lowercase UUIDs.");
-        for (size_t j = 0; j < i; ++j) if (niko.allowed_lights[j] == niko.allowed_lights[i])
-            return fail(error, "Duplicate Niko fixture ID.");
-    }
-    if (niko.enabled && (niko.controller.empty() || niko.tls_server_name.empty() ||
-        niko.username.empty() || niko.jwt.empty() || niko.ca_pem.empty()))
-        return fail(error, "Enabled Niko requires controller, verified TLS identity, username, token and provided CA.");
-    return true;
-}
-
 bool validate_conversation(const BuddySettings &settings, std::string &error) {
     bool mode = false;
     for (const char *name : conversation_modes) if (settings.conversation_mode == name) mode = true;
@@ -352,7 +305,6 @@ bool validate(const BuddySettings &settings, std::string &error)
     if (!known_scene) return fail(error, "Scene must be one of the built-in Arvel scenes.");
     if (!validate_tts(settings, error)) return false;
     if (!validate_conversation(settings, error)) return false;
-    if (!validate_niko(settings.niko, error)) return false;
     return validate_prefs(settings.prefs, error);
 }
 
@@ -648,47 +600,6 @@ bool patch_live(const cJSON *group, const BuddySettings &current, BuddySettings 
     return true;
 }
 
-bool patch_niko(const cJSON *group, const BuddyNikoProfile &current,
-                BuddyNikoProfile &next, std::string &error) {
-    if (!cJSON_IsObject(group)) return fail(error, "Niko settings must be an object.");
-    static const char *names[] = {"enabled", "controller", "tlsServerName", "username", "jwt", "caPem", "allowedLights"};
-    unsigned seen = 0;
-    for (const cJSON *field = group->child; field; field = field->next) {
-        unsigned index = 0;
-        if (!field->string) return fail(error, "Invalid Niko setting.");
-        while (index < 7 && std::strcmp(field->string, names[index])) ++index;
-        if (index == 7) return fail(error, "Unknown Niko setting.");
-        if (seen & (1u << index)) return fail(error, "Duplicate Niko setting.");
-        seen |= 1u << index;
-        if (index == 0 && !bool_field(field, next.enabled, error)) return false;
-        if (index == 1 && !string_field(field, niko_host_limit, next.controller, error)) return false;
-        if (index == 2 && !string_field(field, niko_host_limit, next.tls_server_name, error)) return false;
-        if (index == 3 && !string_field(field, niko_username_limit, next.username, error)) return false;
-        if (index == 4 && !string_field(field, niko_jwt_limit, next.jwt, error)) return false;
-        if (index == 5 && !string_field(field, niko_ca_limit, next.ca_pem, error)) return false;
-        if (index == 6) {
-            if (!cJSON_IsArray(field) || cJSON_GetArraySize(field) > int(niko_fixture_limit))
-                return fail(error, "Niko allowedLights must contain at most 16 UUIDs.");
-            next.allowed_lights.clear();
-            for (const cJSON *id = field->child; id; id = id->next) {
-                std::string value;
-                if (!string_field(id, 36, value, error)) return false;
-                next.allowed_lights.push_back(std::move(value));
-            }
-        }
-    }
-    if (next.controller != current.controller || next.tls_server_name != current.tls_server_name) {
-        const bool fresh = (seen & 56u) == 56u && !next.username.empty() && !next.jwt.empty() && !next.ca_pem.empty();
-        const bool cleared = !next.enabled && (seen & 56u) == 56u &&
-            next.username.empty() && next.jwt.empty() && next.ca_pem.empty();
-        if (!fresh && !cleared)
-            return fail(error, "Changing Niko controller or TLS identity requires fresh username, token and CA, or explicit clearing with Niko disabled.");
-        // An old controller's fixture UUIDs are never authority on a replacement.
-        if (!(seen & 64u)) next.allowed_lights.clear();
-    }
-    return validate_niko(next, error);
-}
-
 
 bool save_conversation(nvs_handle_t handle, const BuddySettings &settings) {
     const std::string *values[] = {&settings.chat_provider, &settings.live.provider, &settings.live.model,
@@ -746,64 +657,12 @@ bool load_conversation(nvs_handle_t handle, BuddySettings &settings, std::string
            fail(error, "Saved conversation settings failed validation; boot defaults retained.");
 }
 
-bool save_niko(nvs_handle_t handle, const BuddyNikoProfile &niko) {
-    const std::string *values[] = {&niko.controller, &niko.tls_server_name, &niko.username, &niko.jwt, &niko.ca_pem};
-    size_t size = niko_header + 36 * niko.allowed_lights.size();
-    for (const auto *value : values) size += value->size();
-    SecretRecord record(size);
-    if (!record.bytes) return false;
-    auto *b = record.bytes.get();
-    std::memcpy(b, "UBN1", 4); b[4] = 1; b[5] = niko.enabled; b[6] = niko.allowed_lights.size();
-    size_t offset = niko_header;
-    for (size_t i = 0; i < niko_fields; ++i) {
-        const size_t length = values[i]->size();
-        b[7 + 2*i] = length; b[8 + 2*i] = length >> 8;
-        std::memcpy(b + offset, values[i]->data(), length); offset += length;
-    }
-    for (const auto &id : niko.allowed_lights) { std::memcpy(b + offset, id.data(), 36); offset += 36; }
-    return nvs_set_blob(handle, "niko", b, size) == ESP_OK;
-}
-
-bool load_niko(nvs_handle_t handle, BuddyNikoProfile &niko, std::string &error) {
-    size_t size = 0;
-    const esp_err_t found = nvs_get_blob(handle, "niko", nullptr, &size);
-    if (found == ESP_ERR_NVS_NOT_FOUND) return true;
-    if (found != ESP_OK || size < niko_header || size > niko_record_limit)
-        return fail(error, "Saved Niko profile is unreadable; boot defaults retained.");
-    SecretRecord record(size);
-    if (!record.bytes) return fail(error, "Not enough memory to load Niko profile.");
-    auto *b = record.bytes.get(); const size_t expected = size;
-    if (nvs_get_blob(handle, "niko", b, &size) != ESP_OK || size != expected ||
-        std::memcmp(b, "UBN1", 4) || b[4] != 1 || b[5] > 1 || b[6] > niko_fixture_limit)
-        return fail(error, "Saved Niko version or flags are invalid; boot defaults retained.");
-    BuddyNikoProfile loaded; loaded.enabled = b[5] == 1;
-    std::string *values[] = {&loaded.controller, &loaded.tls_server_name, &loaded.username, &loaded.jwt, &loaded.ca_pem};
-    const size_t limits[] = {niko_host_limit, niko_host_limit, niko_username_limit, niko_jwt_limit, niko_ca_limit};
-    size_t offset = niko_header;
-    for (size_t i = 0; i < niko_fields; ++i) {
-        const size_t length = b[7 + 2*i] | (size_t(b[8 + 2*i]) << 8);
-        if (length > limits[i] || length > size - offset)
-            return fail(error, "Saved Niko field exceeds its bound; boot defaults retained.");
-        values[i]->assign(reinterpret_cast<const char *>(b + offset), length); offset += length;
-    }
-    if (size - offset != 36 * size_t(b[6]))
-        return fail(error, "Saved Niko fixture record is invalid; boot defaults retained.");
-    for (size_t i = 0; i < b[6]; ++i) {
-        loaded.allowed_lights.emplace_back(reinterpret_cast<const char *>(b + offset), 36); offset += 36;
-    }
-    if (!validate_niko(loaded, error)) return false;
-    niko = std::move(loaded);
-    return true;
-}
-
 bool storage_capacity(const BuddySettings &settings, size_t base_size, std::string &error) {
     const size_t conversation_size = conversation_header + settings.chat_provider.size() + settings.live.provider.size() +
         settings.live.model.size() + settings.live.endpoint.size() + settings.live.api_key.size();
-    const size_t niko_size = niko_header + settings.niko.controller.size() + settings.niko.tls_server_name.size() +
-        settings.niko.username.size() + settings.niko.jwt.size() + settings.niko.ca_pem.size() + 36 * settings.niko.allowed_lights.size();
     const size_t sizes[] = {base_size, prefs_fixed + settings.prefs.user_name.size() + settings.prefs.timezone.size(),
         tts_fixed + settings.tts_voice.size(), 11 + settings.tavily_api_key.size() + settings.parallel_api_key.size(),
-        conversation_size, niko_size};
+        conversation_size};
     // Blob v2 needs entries for the index, each <=4000-byte chunk and each
     // 32 bytes of data. Reserve a complete page rather than assuming a raw
     // byte total fits the owner's existing 24 KiB NVS partition.
@@ -970,7 +829,6 @@ bool buddy_settings_patch(const cJSON *patch, const BuddySettings &current,
         else if (std::strcmp(group->string, "search") == 0) bit = 32;
         else if (std::strcmp(group->string, "conversationMode") == 0) bit = 64;
         else if (std::strcmp(group->string, "live") == 0) bit = 128;
-        else if (std::strcmp(group->string, "niko") == 0) bit = 256;
         else return fail(error, "Unknown settings group.");
         if (seen & bit) return fail(error, "Duplicate settings group.");
         seen |= bit;
@@ -985,7 +843,6 @@ bool buddy_settings_patch(const cJSON *patch, const BuddySettings &current,
         if (bit == 32 && !patch_search(group, next, error)) return false;
         if (bit == 64 && !string_field(group, 16, next.conversation_mode, error)) return false;
         if (bit == 128 && !patch_live(group, current, next, error)) return false;
-        if (bit == 256 && !patch_niko(group, current.niko, next.niko, error)) return false;
     }
     normalize_model(next);
     if (!validate(next, error)) return false;
@@ -1022,8 +879,11 @@ bool buddy_settings_save(const BuddySettings &settings, std::string &error)
         return fail(error, "Could not open settings storage.");
     if (nvs_set_blob(handle.value, storage_key, bytes.get(), size) != ESP_OK ||
         !save_prefs(handle.value, settings.prefs) || !save_tts(handle.value, settings) ||
-        !save_search(handle.value, settings) || !save_conversation(handle.value, settings) ||
-        !save_niko(handle.value, settings.niko))
+        !save_search(handle.value, settings) || !save_conversation(handle.value, settings))
+        return fail(error, "Could not write settings storage.");
+    // Purge the credentials blob left by the removed Niko integration.
+    const esp_err_t retired = nvs_erase_key(handle.value, "niko");
+    if (retired != ESP_OK && retired != ESP_ERR_NVS_NOT_FOUND)
         return fail(error, "Could not write settings storage.");
     if (nvs_commit(handle.value) != ESP_OK)
         return fail(error, "Could not commit settings storage.");
@@ -1071,7 +931,6 @@ bool buddy_settings_load(BuddySettings &settings, std::string &error)
     if (!load_tts(handle.value, loaded, error)) return false;
     if (!load_search(handle.value, loaded, error)) return false;
     if (!load_conversation(handle.value, loaded, error)) return false;
-    if (!load_niko(handle.value, loaded.niko, error)) return false;
     normalize_model(loaded);
     if (!validate(loaded, error)) {
         error = "Saved settings failed validation; boot defaults retained.";
@@ -1103,20 +962,6 @@ cJSON *buddy_settings_public_json(const BuddySettings &settings)
         cJSON_AddBoolToObject(search, "enabled", settings.search_enabled) &&
         cJSON_AddBoolToObject(search, "tavilyApiKeyConfigured", !settings.tavily_api_key.empty()) &&
         cJSON_AddBoolToObject(search, "parallelApiKeyConfigured", !settings.parallel_api_key.empty());
-    cJSON *niko = okay ? cJSON_AddObjectToObject(root, "niko") : nullptr;
-    okay = niko && cJSON_AddBoolToObject(niko, "enabled", settings.niko.enabled) &&
-        add_string(niko, "controller", settings.niko.controller) &&
-        add_string(niko, "tlsServerName", settings.niko.tls_server_name) &&
-        cJSON_AddBoolToObject(niko, "hasUsername", !settings.niko.username.empty()) &&
-        cJSON_AddBoolToObject(niko, "hasJwt", !settings.niko.jwt.empty()) &&
-        cJSON_AddBoolToObject(niko, "hasCa", !settings.niko.ca_pem.empty());
-    cJSON *allowed = okay ? cJSON_AddArrayToObject(niko, "allowedLights") : nullptr;
-    okay = allowed != nullptr;
-    for (const auto &id : settings.niko.allowed_lights) {
-        if (!okay) break;
-        cJSON *value = cJSON_CreateString(id.c_str());
-        if (!value || !cJSON_AddItemToArray(allowed, value)) { cJSON_Delete(value); okay = false; }
-    }
     cJSON *buddy = okay ? cJSON_AddObjectToObject(root, "buddy") : nullptr;
     okay = buddy && add_string(buddy, "name", settings.name) &&
            add_string(buddy, "instructions", settings.instructions) &&

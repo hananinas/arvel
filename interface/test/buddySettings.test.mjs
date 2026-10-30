@@ -25,7 +25,6 @@ function response() {
 		conversationMode: 'text_pipeline',
 		live: { provider: 'nebius', model: 'nvidia/NVIDIA-NemotronLabs-VoiceChat-11B', protocol: 'nemotron_labs_realtime', endpoint: '', apiKeyConfigured: false },
 		search: { provider: 'tavily', enabled: true, tavilyApiKeyConfigured: true, parallelApiKeyConfigured: false },
-		niko: { enabled: false, controller: '', tlsServerName: '', allowedLights: [], hasUsername: false, hasJwt: false, hasCa: false },
 		buddy: { name: 'Arvel', instructions: 'Be concise.', readAloud: false, scene: 'meadow' },
 		preferences: { userName: '', voiceStyle: 'warm', speechRate: 10, captions: true, brightness: 70,
 			dimAtNight: true, screenSleep: '5min', persona: 'calm', volume: 60, timezone: 'UTC0' },
@@ -118,43 +117,12 @@ test('native endpoint accepts only exact DNS or IPv4 realtime ingress', () => {
 	}
 });
 
-const certificate = '-----BEGIN CERTIFICATE-----\nZml4dHVyZQ==\n-----END CERTIFICATE-----\n';
-const fixture = '0000000a-0000-4000-8000-000000000001';
-function configuredNiko() {
+test('the retired Niko settings group is rejected in both directions', () => {
 	const value = response();
-	value.niko = { enabled: true, controller: '192.0.2.10', tlsServerName: 'controller.example.org',
-		allowedLights: [fixture], hasUsername: true, hasJwt: true, hasCa: true };
-	return value;
-}
-test('Niko public profile forbids returned credentials and malformed permissions', () => {
-	assert.equal(isBuddySettings(configuredNiko()), true);
-	for (const extra of [{ username: 'owner' }, { jwt: 'never-returned' }, { caPem: certificate },
-		{ allowedLights: [fixture, fixture] }, { allowedLights: ['socket-by-name'] },
-		{ controller: 'mqtts://controller.example.org:8884' }, { tlsServerName: '[::1]' }]) {
-		const value = configuredNiko();
-		Object.assign(value.niko, extra);
-		assert.equal(isBuddySettings(value), false);
-	}
-});
-test('Niko controller and certificate identity hops require all fresh credentials', () => {
-	for (const change of [{ controller: '192.0.2.11' }, { tlsServerName: 'replacement.example.org' }]) {
-		assert.ok(validateSettingsPatch({ niko: change }, configuredNiko()).some(issue => issue.field === 'niko-controller'));
-		assert.ok(validateSettingsPatch({ niko: { ...change, jwt: 'fresh-token' } }, configuredNiko()).some(issue => issue.field === 'niko-controller'));
-		assert.deepEqual(validateSettingsPatch({ niko: { ...change, username: 'fresh-owner', jwt: 'fresh-token', caPem: certificate } }, configuredNiko()), []);
-		assert.deepEqual(validateSettingsPatch({ niko: { ...change, enabled: false, username: '', jwt: '', caPem: '' } }, configuredNiko()), []);
-	}
-	assert.ok(validateSettingsPatch({ niko: { jwt: '' } }, configuredNiko()).some(issue => issue.field === 'niko-enabled'));
-});
-test('Niko write-only field and permission bounds reject malformed owner patches', () => {
-	const current = configuredNiko();
-	assert.deepEqual(validateSettingsPatch({ niko: { username: 'x'.repeat(128), jwt: 'x'.repeat(2048),
-		caPem: certificate, allowedLights: [fixture] } }, current), []);
-	for (const patch of [{ username: 'é'.repeat(65) }, { jwt: 'x'.repeat(2049) }, { jwt: 'bad\nheader' },
-		{ caPem: certificate + 'x'.repeat(8192) }, { caPem: 'not a certificate' },
-		{ allowedLights: [fixture, fixture] }, { allowedLights: [fixture.toUpperCase()] },
-		{ allowedLights: Array.from({ length: 17 }, (_, i) => `00000000-0000-4000-8000-${String(i).padStart(12, '0')}`) },
-		{ mqttTopic: 'never-owner-configurable' }]) {
-		assert.notEqual(validateSettingsPatch({ niko: patch }, current).length, 0);
+	value.niko = { enabled: false };
+	assert.equal(isBuddySettings(value), false);
+	for (const niko of [{}, { enabled: false }, null]) {
+		assert.notEqual(validateSettingsPatch({ niko }, response()).length, 0);
 	}
 });
 function nativeSnapshot() {
@@ -193,17 +161,12 @@ test('native screen and memory metrics reject malformed values', () => {
 test('owner tools retain all outcomes and reject obsolete success flags or credential fields', () => {
 	for (const state of ['running', 'succeeded', 'failed', 'unknown', 'cancelled', 'partial']) {
 		const value = nativeSnapshot();
-		value.tools = [{ id: 'provider-call', kind: 'niko', verb: 'control', target: 'fixture', state, error: '' }];
+		value.tools = [{ id: 'provider-call', kind: 'timer', verb: 'start', target: 'fixture', state, error: '' }];
 		assert.equal(isAgentSnapshot(value), true);
 		value.tools[0].done = true;
 		assert.equal(isAgentSnapshot(value), false);
 	}
-	for (const group of ['live', 'niko']) {
-		const value = response();
-		value[group].authorization = 'must-never-be-returned';
-		assert.equal(isBuddySettings(value), false);
-	}
-	for (const niko of [null, true, 'profile', []]) {
-		assert.notEqual(validateSettingsPatch({ niko }, response()).length, 0);
-	}
+	const value = response();
+	value.live.authorization = 'must-never-be-returned';
+	assert.equal(isBuddySettings(value), false);
 });

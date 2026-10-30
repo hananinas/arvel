@@ -34,6 +34,8 @@ struct ToolResult {
     std::string output;
     std::string error;
     bool durable_acknowledged = false;
+    // Set by Agent when the policy supplied a previously recorded outcome.
+    bool reused = false;
 };
 struct RunResult {
     bool ok = false;
@@ -48,6 +50,13 @@ struct Tool {
                     const ToolCallContext &call, void *context) = nullptr;
     void *context = nullptr;
     bool requires_durable = false;
+    // A read-only tool's interrupted call may be presented to the model as a
+    // failed result; any other unknown outcome blocks the session until reset.
+    bool read_only = false;
+    // May run concurrently with other parallel-safe calls from the same model
+    // response, on separate threads. Policy and observer hooks must then be
+    // thread-safe too. Only for read-only handlers without ordering needs.
+    bool parallel_safe = false;
 };
 using ToolObserver = void (*)(const char *name, const char *arguments_json,
     const ToolCallContext &call, const ToolResult &result, void *context);
@@ -59,7 +68,8 @@ using AfterTool = bool (*)(const char *, const char *, const ToolCallContext &, 
 using SessionCheckpoint = bool (*)(const char *session_json, size_t length, uint64_t message_offset, void *);
 
 // One conversation per instance. Calls are synchronous, serial, and worker-only.
-// All callback contexts remain valid until the operation returns. Not thread-safe.
+// All callback contexts remain valid until the operation returns. Not thread-safe,
+// except that run() may invoke execute_tool concurrently for parallel_safe tools.
 class Agent {
 public:
     explicit Agent(unravel_model_callback_t model, void *context = nullptr);

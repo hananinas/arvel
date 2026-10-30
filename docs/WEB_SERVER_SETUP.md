@@ -4,7 +4,7 @@
 
 The firmware serves public embedded Svelte assets over HTTP, but **Settings, native device state and controls require a real owner username/password session**. A matching Origin, page load or displayed template feature alone grants no authority. This is a trusted-home-LAN device interface, not an internet-facing service or host console.
 
-Native conversation, microphone, transcripts and effects remain separate from legacy HTTP chat. Owner login permits saved model/deployment/speech/search/Niko configuration, bounded history inspection and explicit native controls. Home draws actual projected state, not framebuffer pixels; no raw-touch endpoint exists. Starting voice asks consent for Arvel's physical microphone, never the browser mic. Native-audio typed conversation/read-aloud is explicitly unsupported. Wi-Fi onboarding/zero-tool legacy chat remain physical-window/AP-only; host console/runtime-pairing authority remains unimplemented.
+Native conversation, microphone, transcripts and effects remain separate from legacy HTTP chat. Owner login permits saved model/deployment/speech/search configuration, bounded history inspection and explicit native controls. Home draws actual projected state, not framebuffer pixels; no raw-touch endpoint exists. Starting voice asks consent for Arvel's physical microphone, never the browser mic. Native-audio typed conversation/read-aloud is explicitly unsupported. Wi-Fi onboarding/zero-tool legacy chat remain physical-window/AP-only; host console/runtime-pairing authority remains unimplemented.
 
 ## Connect an unconfigured board
 
@@ -39,7 +39,7 @@ The approval code lasts five minutes, accepts at most five incorrect attempts an
 
 Usernames are 1–32 ASCII letters, digits, dots, underscores or hyphens; passwords are 8–128 UTF-8 bytes. There are no shared/default credentials. **Log out** revokes that browser's session and a previously authorized logout stops shared native activity; an unauthenticated logout cannot stop another session. Logout cannot undo a command already handed to a controller.
 
-**Forgot password?** plus a new physical approval code replaces owner credentials and revokes all sessions. Committed Codex accounts, provider/Niko keys and Wi-Fi remain, but pending Codex sign-in and native activity are cancelled. Factory reset still requires its separate physical confirmation.
+**Forgot password?** plus a new physical approval code replaces owner credentials and revokes all sessions. Committed Codex accounts, provider keys and Wi-Fi remain, but pending Codex sign-in and native activity are cancelled. Factory reset still requires its separate physical confirmation.
 
 ## Session and HTTP security
 
@@ -64,8 +64,7 @@ Five failed logins within a minute trigger a 60-second global cooldown. Successf
 | `POST /rest/device/history/new`, `/<uuid>/resume`, `/<uuid>/close` | Owner memory control with empty JSON object; resume restores bounded context, never microphone/old actions |
 | `DELETE /rest/device/history/<uuid>` | Confirmed owner logical deletion, not secure SD erasure |
 | `POST /rest/agent/readiness` | Owner saved native-deployment health check only; no microphone/inference request |
-| `GET /rest/device/niko?after=…&count=…` | Owner bounded controller status/inventory, including stale/auth/expiry/observation state |
-| `POST /rest/device/niko/control` | One exact discovered owner-enabled supported dimmer UUID; absolute `status` and/or `brightness`, shared durable tool worker |
+| `GET /rest/device/desk` | Owner read-only notes/tasks, running timer and cached weather; changes go only through Arvel's tools |
 | `GET /rest/agent` | Physical-window/AP-only legacy history and status, never native history/transcripts/settings |
 | `POST /rest/agent/chat` | Physical-window/AP-only silent text in a separate zero-tool session; speech requests deny |
 | `POST /rest/agent/reset` | Physical-window/AP-only reset of legacy history, not native chat |
@@ -87,7 +86,7 @@ Owner authorization is rechecked after body reception and before private snapsho
 
 History queries use `after` (nonnegative cursor), `count` (1–20), and for message pages `literal` (at most 256 UTF-8 bytes), `utcFrom`/`utcTo` (nonnegative safe integer milliseconds). Unknown/duplicate query keys, invalid encoding/numbers and oversized requests refuse; raw query is bounded to 2048 bytes and HTTP URI capacity is 2304. Data pages stay within **20 rows/48 KiB** and authorization/cancellation is checked while reading. Home streams all five export kinds into one browser-owned JSON Lines file; each line after its version/conversation header contains a kind and bounded page. Close first for a stable export. Absent authoritative UTC/request IDs are null/unavailable, not fabricated dates or IDs.
 
-Native memory/Niko/health work is serialized with the existing owner worker; queue/operation pressure is a visible error. Asynchronous acceptance is **HTTP 202 with `accepted: true`**, not success or a physical-effect acknowledgment. Niko accepts only `device_id`, optional `status` (`On`/`Off`) and optional integer `brightness` (0–100), with at least one desired property. It never accepts broker/topic/credentials or arbitrary scene/multi-target/toggle operations. Current write classification requires official `action` / `nikohomecontrol` / `dimmer` metadata and authoritative writable property definitions. Generic relays/sockets and other classes are read-only regardless of name.
+Native memory/health work is serialized with the existing owner worker; queue/operation pressure is a visible error. Asynchronous acceptance is **HTTP 202 with `accepted: true`**, not success or a physical-effect acknowledgment.
 
 Restart and Factory reset are available under native **Settings → Device → Device actions**. Each requires a separate physical confirmation with Cancel. The screen reports request acceptance, not observed reboot completion. Stop or expiry cancels scheduled effects; failed NVS erase is reported without restarting.
 
@@ -101,16 +100,13 @@ Direct voice is experimental: account/workspace access and subscription limits a
 
 The owner password is stored only as a salted derivation and owner session tokens as hashes. **Codex OAuth access/refresh credentials and provider/STT keys are recoverable from currently unencrypted flash/NVS** by an attacker with physical access. Keep the board physically trusted. Ignored private firmware defaults remain embedded credentials; `CONFIG_UNRAVEL_TTS_CODEX` and `CONFIG_UNRAVEL_TTS_VOICE` only select boot speech mode/voice, not an account login. Never distribute credential-bearing private configuration, firmware or generated headers. Runtime device identity must not become owner authority.
 
-## Native deployment, SD and Niko setup
+## Native deployment and SD setup
 
 1. Follow [VOICECHAT_DEPLOYMENT.md](../scripts/VOICECHAT_DEPLOYMENT.md) for owner-authorized Nebius GPU access, quota/spend limits, exact immutable artifacts, private verified TLS/bearer ingress and separate NVIDIA evaluation/public-use permissions. No hosted endpoint or successful GPU run is inferred from the catalog.
 2. Choose **Conversation model & deployment** explicitly. The models.dev picker shows capabilities, known adapter support and unknown metadata without inventing support/free pricing. Native speech requires its saved exact WSS profile; it has no separate STT/TTS configuration. **Check saved deployment · no microphone** establishes authenticated health only.
-3. Insert SD before startup. **Local memory** shows actual storage status; Home can inspect/search/page/new/resume/close/export/delete. Missing/full/corrupt/read-only storage never automatically formats. Existing local tools keep bounded non-durable protection; Niko writes require durable admission. Selected context/audio goes to cloud; SD/NVS/LAN HTTP are not end-to-end encrypted.
-4. Enable Niko Hobby API in programming software. Privately enter the supplied username, annual token, CA and controller/TLS identity. Arvel uses verified MQTT TLS **8884**; valid time and certificate identity remain required. See [public Hobby API setup](https://guide.niko.eu/en/connhc2/lv/hobby-api); do not redistribute confidential documentation or the supplied CA.
-5. Save enabled Niko configuration for read-only discovery, refresh inventory, then explicitly enable allowed supported dimmers and save permissions. The default allowlist is empty. Owner control asks confirmation; acceptance is not success. Inspect Home's actual tool outcome and controller observation; only `succeeded` is marked successful. Unknown/partial/failed/cancelled remain distinct.
-6. Controller/TLS-identity changes clear entered credentials and draft permissions, requiring all fresh credentials or disabling/explicit clearing. Keys are wiped from browser drafts after submission, failure, logout and unmount. Firmware returns configured flags, never saved credentials.
+3. Insert SD before startup. **Local memory** shows actual storage status; Home can inspect/search/page/new/resume/close/export/delete. Missing/full/corrupt/read-only storage never automatically formats. Existing local tools keep bounded non-durable protection. Selected context/audio goes to cloud; SD/NVS/LAN HTTP are not end-to-end encrypted.
+4. Keys are wiped from browser drafts after submission, failure, logout and unmount. Firmware returns configured flags, never saved credentials.
 
-Niko subscribes/discovers before writing and publishes one non-retained absolute command. Evidence must arrive after publication returns and on the same connection epoch; a queued earlier match or disconnect is unknown, not green success. Reconnect is read-only and never replays a control. An observation is not proof of causality or a physically lit lamp. Account/runtime cancellation cannot recall handed-off MQTT/TLS bytes.
 
 Before installing this candidate, follow the [approved two-slot partition migration](../README.md#build-and-board-selection). It preserves data addresses but requires bootloader/table/initial OTA metadata/application together, with backups and explicit flash authorization. App-only updates are insufficient for the old table. No flash/erase or household action was performed during this implementation.
 

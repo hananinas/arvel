@@ -38,27 +38,6 @@ export interface SearchSettings {
 	parallelApiKeyConfigured: boolean;
 }
 
-export interface NikoSettings {
-	enabled: boolean;
-	controller: string;
-	tlsServerName: string;
-	allowedLights: string[];
-	hasUsername: boolean;
-	hasJwt: boolean;
-	hasCa: boolean;
-}
-
-export interface NikoPatch {
-	enabled?: boolean;
-	controller?: string;
-	tlsServerName?: string;
-	allowedLights?: string[];
-	/** Write-only. Empty string explicitly clears the saved value. */
-	username?: string;
-	jwt?: string;
-	caPem?: string;
-}
-
 export type VoiceStyle = 'warm' | 'bright' | 'soft';
 export type ScreenSleep = '1min' | '5min' | 'never';
 export type Persona = 'calm' | 'chatty' | 'focused';
@@ -98,7 +77,6 @@ export interface BuddySettings {
 	conversationMode: ConversationMode;
 	live: LiveSettings;
 	search: SearchSettings;
-	niko: NikoSettings;
 	buddy: { name: string; instructions: string; readAloud: boolean; scene: string };
 	preferences: Preferences;
 	busy: boolean;
@@ -127,7 +105,6 @@ export interface BuddySettingsPatch {
 	conversationMode?: ConversationMode;
 	live?: LivePatch;
 	search?: SearchPatch;
-	niko?: NikoPatch;
 	buddy?: Partial<BuddySettings['buddy']>;
 	preferences?: Partial<Preferences>;
 }
@@ -190,8 +167,7 @@ function isSearch(value: unknown): value is SearchSettings {
 		typeof value.parallelApiKeyConfigured === 'boolean';
 }
 
-const fixtureId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-function validNikoHost(host: string): boolean {
+function validHost(host: string): boolean {
 	if (!host || host.length > 253 || /[:\/\[\]@?#\\]/.test(host)) return false;
 	const bare = host.endsWith('.') ? host.slice(0, -1) : host;
 	if (!bare || !bare.split('.').every(label => /^[a-z\d](?:[a-z\d-]{0,61}[a-z\d])?$/i.test(label))) return false;
@@ -199,19 +175,6 @@ function validNikoHost(host: string): boolean {
 		return bare.split('.').length === 4 && bare.split('.').every(part => /^(0|[1-9]\d{0,2})$/.test(part) && Number(part) <= 255);
 	return true;
 }
-function validAllowedLights(value: unknown): value is string[] {
-	return Array.isArray(value) && value.length <= 16 && value.every(id => typeof id === 'string' && fixtureId.test(id)) &&
-		new Set(value).size === value.length;
-}
-function isNiko(value: unknown): value is NikoSettings {
-	return record(value) && exactFields(value, ['enabled', 'controller', 'tlsServerName', 'allowedLights', 'hasUsername', 'hasJwt', 'hasCa']) &&
-		typeof value.enabled === 'boolean' && typeof value.controller === 'string' &&
-		(value.controller === '' || validNikoHost(value.controller)) && typeof value.tlsServerName === 'string' &&
-		(value.tlsServerName === '' || validNikoHost(value.tlsServerName)) && validAllowedLights(value.allowedLights) &&
-		typeof value.hasUsername === 'boolean' && typeof value.hasJwt === 'boolean' && typeof value.hasCa === 'boolean' &&
-		(!value.enabled || (!!value.controller && !!value.tlsServerName && value.hasUsername && value.hasJwt && value.hasCa));
-}
-
 const preferenceFields = ['userName', 'voiceStyle', 'speechRate', 'captions', 'brightness', 'dimAtNight', 'screenSleep', 'persona', 'volume', 'timezone'];
 const timezonePattern = /^[\x21-\x7e]{1,64}$/;
 
@@ -250,12 +213,12 @@ export function isPreferences(value: unknown): value is Preferences {
 }
 
 export function isBuddySettings(value: unknown): value is BuddySettings {
-	if (!record(value) || !exactFields(value, ['chat', 'voice', 'tts', 'conversationMode', 'live', 'search', 'niko', 'buddy', 'preferences', 'busy']) || !isPreferences(value.preferences)) return false;
+	if (!record(value) || !exactFields(value, ['chat', 'voice', 'tts', 'conversationMode', 'live', 'search', 'buddy', 'preferences', 'busy']) || !isPreferences(value.preferences)) return false;
 	const buddy = value.buddy;
 	return isChat(value.chat) && isProvider(value.voice) && isTts(value.tts) && isLive(value.live) &&
 		['text_pipeline', 'codex_live', 'native_audio'].includes(value.conversationMode as string) &&
 		(value.conversationMode !== 'native_audio' || (value.live as LiveSettings).endpoint !== '') &&
-		isSearch(value.search) && isNiko(value.niko) && typeof value.busy === 'boolean' &&
+		isSearch(value.search) && typeof value.busy === 'boolean' &&
 		record(buddy) && exactFields(buddy, ['name', 'instructions', 'readAloud', 'scene']) &&
 		typeof buddy.name === 'string' && buddy.name.trim().length > 0 && utf8Bytes(buddy.name) <= 32 && !controls.test(buddy.name) &&
 		typeof buddy.instructions === 'string' && utf8Bytes(buddy.instructions) <= 2048 && !instructionControls.test(buddy.instructions) &&
@@ -285,7 +248,7 @@ function validLiveEndpoint(endpoint: string): boolean {
 	if (!validEndpoint(endpoint, 'wss:') || endpoint.slice(endpoint.indexOf('/', 6)) !== '/v1/realtime') return false;
 	const authority = endpoint.slice(6, endpoint.indexOf('/', 6));
 	const [host, port, extra] = authority.split(':');
-	return extra === undefined && validNikoHost(host) &&
+	return extra === undefined && validHost(host) &&
 		(port === undefined || (/^\d{1,5}$/.test(port) && Number(port) > 0 && Number(port) <= 65535));
 }
 
@@ -300,25 +263,24 @@ export function validateSettingsPatch(patch: BuddySettingsPatch, current: BuddyS
 		live: ['provider', 'model', 'protocol', 'endpoint', 'apiKey', 'clearApiKey'],
 		tts: ['backend', 'voice'],
 		search: ['provider', 'enabled', 'tavilyApiKey', 'parallelApiKey', 'clearTavilyApiKey', 'clearParallelApiKey'],
-		niko: ['enabled', 'controller', 'tlsServerName', 'allowedLights', 'username', 'jwt', 'caPem'],
 		buddy: ['name', 'instructions', 'readAloud', 'scene'],
 		preferences: preferenceFields
 	};
 	for (const [group, value] of Object.entries(patch)) {
 		if (group === 'conversationMode') continue;
 		if (!Object.prototype.hasOwnProperty.call(fields, group) || !record(value)) {
-			issues.push({ field: group === 'niko' ? 'niko-enabled' : 'conversation-mode', message: 'Unknown settings group or non-object settings patch.' });
+			issues.push({ field: 'conversation-mode', message: 'Unknown settings group or non-object settings patch.' });
 			continue;
 		}
 		for (const [field, item] of Object.entries(value)) {
 			if (!fields[group].includes(field)) {
-				issues.push({ field: group === 'niko' ? 'niko-enabled' : 'conversation-mode', message: 'Unknown settings field; reload the owner interface.' });
+				issues.push({ field: 'conversation-mode', message: 'Unknown settings field; reload the owner interface.' });
 				continue;
 			}
-			if (field === 'allowedLights' || group === 'preferences') continue;
+			if (group === 'preferences') continue;
 			const boolean = ['clearApiKey', 'enabled', 'clearTavilyApiKey', 'clearParallelApiKey', 'readAloud'].includes(field);
 			if (typeof item !== (boolean ? 'boolean' : 'string'))
-				issues.push({ field: group === 'niko' ? `niko-${field}` : 'conversation-mode', message: 'Settings field has an invalid value type.' });
+				issues.push({ field: 'conversation-mode', message: 'Settings field has an invalid value type.' });
 		}
 	}
 	if (issues.length) return issues;
@@ -375,35 +337,6 @@ export function validateSettingsPatch(patch: BuddySettingsPatch, current: BuddyS
 	}
 	if ((patch.conversationMode ?? current.conversationMode) === 'native_audio' && (patch.live?.endpoint ?? current.live.endpoint) === '')
 		issues.push({ field: 'live-endpoint', message: 'Set the deployment endpoint before selecting native audio.' });
-	if (patch.niko) {
-		const niko = patch.niko;
-		if (niko.enabled !== undefined && typeof niko.enabled !== 'boolean')
-			issues.push({ field: 'niko-enabled', message: 'Choose whether Niko is enabled.' });
-		for (const field of ['controller', 'tlsServerName'] as const) {
-			if (niko[field] !== undefined && (typeof niko[field] !== 'string' || (niko[field] !== '' && !validNikoHost(niko[field]))))
-				issues.push({ field: `niko-${field}`, message: 'Use a DNS name or IPv4 address up to 253 bytes, without URL, port or IPv6.' });
-		}
-		if (niko.allowedLights !== undefined && !validAllowedLights(niko.allowedLights))
-			issues.push({ field: 'niko-allowedLights', message: 'Enable at most 16 unique lowercase fixture UUIDs.' });
-		if (niko.username !== undefined && (typeof niko.username !== 'string' || utf8Bytes(niko.username) > 128 || tokenCharacters.test(niko.username)))
-			issues.push({ field: 'niko-username', message: 'Username must be at most 128 UTF-8 bytes without whitespace or controls.' });
-		if (niko.jwt !== undefined && (typeof niko.jwt !== 'string' || utf8Bytes(niko.jwt) > 2048 || /[^\x21-\x7e]/.test(niko.jwt)))
-			issues.push({ field: 'niko-jwt', message: 'Token must be at most 2,048 printable ASCII bytes, without whitespace.' });
-		if (niko.caPem !== undefined && (typeof niko.caPem !== 'string' || utf8Bytes(niko.caPem) > 8192 || instructionControls.test(niko.caPem) ||
-			(niko.caPem !== '' && (!niko.caPem.startsWith('-----BEGIN CERTIFICATE-----') || !niko.caPem.includes('-----END CERTIFICATE-----')))))
-			issues.push({ field: 'niko-caPem', message: 'Provide the Niko certificate PEM, at most 8,192 UTF-8 bytes. Certificate verification cannot be disabled.' });
-		const enabled = niko.enabled ?? current.niko.enabled;
-		const hop = niko.controller !== undefined && niko.controller !== current.niko.controller ||
-			niko.tlsServerName !== undefined && niko.tlsServerName !== current.niko.tlsServerName;
-		if (hop && !(niko.username && niko.jwt && niko.caPem) &&
-			!(!enabled && niko.username === '' && niko.jwt === '' && niko.caPem === ''))
-			issues.push({ field: 'niko-controller', message: 'Controller or TLS identity changed. Enter a fresh username, token and CA, or disable Niko and explicitly clear all three.' });
-		if (enabled && (!(niko.controller ?? current.niko.controller) || !(niko.tlsServerName ?? current.niko.tlsServerName) ||
-			!(niko.username !== undefined ? niko.username : current.niko.hasUsername) ||
-			!(niko.jwt !== undefined ? niko.jwt : current.niko.hasJwt) ||
-			!(niko.caPem !== undefined ? niko.caPem : current.niko.hasCa)))
-			issues.push({ field: 'niko-enabled', message: 'Save controller, verified TLS identity, username, token and provided CA before enabling Niko.' });
-	}
 	if (patch.search) {
 		const search = patch.search;
 		if (search.provider !== undefined && search.provider !== 'tavily' && search.provider !== 'parallel') {
