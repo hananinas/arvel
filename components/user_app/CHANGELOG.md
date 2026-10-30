@@ -1,5 +1,11 @@
 # Arvel firmware changelog
 
+## Historical credential cleanup — 2026-10-30
+
+- Removed two hard-coded OpenRouter API keys and a home Wi-Fi password from reachable repository history, including local backup refs. Removed historical `build/` artifacts containing embedded credentials. Existing commit dates and current application sources are unchanged.
+- Verified sanitized reachable blobs and commit messages against the exposed values and current private configuration credentials, with no matches. Gitleaks findings were limited to inspected SQLite-code false positives.
+- Exposed keys still require revocation and the Wi-Fi password requires rotation. Rewriting history does not invalidate credentials or remove copies in existing clones, forks, or hosting caches.
+
 ## Parallel read-only tools, background scenes and Nebius preset — 2026-10-30
 
 - Up to three consecutive read-only tool calls from one model reply (weather, web search, calculation, unit conversion, device status, battery) now run concurrently on separate callback threads. Model calls and effectful tools still wait for every earlier callback. Tool policy state moved from shared globals into each call, and the in-memory duplicate ledger gained a lock.
