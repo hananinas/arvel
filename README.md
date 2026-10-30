@@ -12,6 +12,17 @@ The owner web app shows Arvel's screen live and keeps your conversation history:
 
 ![A saved conversation in Arvel's chat history: the user asks for Python in the Nebius sandbox, the sandbox_run_code and sandbox_operation tool rows complete, and Arvel reports the output and final status](docs/images/arvel-chat.png)
 
+## NVIDIA Nemotron + Nebius Token Factory
+
+Arvel is built to run NVIDIA open models. Its native speech mode is **NVIDIA-NemotronLabs-VoiceChat-11B**: one remote model handles speech and reasoning, with tool calls executed on the board. See the [deployment guide](scripts/VOICECHAT_DEPLOYMENT.md) for the serving setup.
+
+Nebius services provide the cloud building blocks:
+
+- **Token Factory Chat API** hosts conversation models. A one-click preset (`Nebius · DeepSeek V4.1 Flash`) fills in `https://api.tokenfactory.us-north1.nebius.com/v1/chat/completions`; add a [Token Factory API key](https://tokenfactory.nebius.com/project/api-keys) and save.
+- **Nebius Sandboxes** give the agent real code execution: `sandbox_run_code` / `sandbox_operation` submit Python or shell straight from the ESP32 over verified HTTPS, and Arvel inspects the operation's exit code before calling anything a success. See [Nebius sandbox code execution](#nebius-sandbox-code-execution).
+
+Both start disabled by design: keys go in Settings or `menuconfig`, so nothing runs without the owner's say-so.
+
 ## Conversation modes
 
 Choose a mode in Settings. Arvel does not switch modes when a provider fails.
